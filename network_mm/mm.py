@@ -28,6 +28,18 @@ import MinkowskiEngine as ME
 from tools.options import parse_arguments
 opt = parse_arguments()
 
+class MLP(nn.Module):
+    def __init__(self, input_dim, output_dim):
+        super().__init__()
+        self.seq = nn.Sequential(
+            nn.Linear(input_dim, output_dim),
+            nn.LayerNorm(output_dim),
+            nn.ReLU(),
+            nn.Linear(output_dim, output_dim),
+        )
+    def forward(self, x):
+        return self.seq(x)
+
 class MM(nn.Module):
     def __init__(self , drop=None):
         super().__init__()
@@ -37,16 +49,22 @@ class MM(nn.Module):
         self.image_pool = GeM()
         planes = [int(x) for x in opt.mm_voxfe_planes.split('_')]
         layers = [int(x) for x in opt.mm_voxfe_layers.split('_')]
-        self.vox_fe = MinkFPN(in_channels=1, out_channels=planes[-1], 
+        self.vox_fe = MinkFPN(in_channels=1, out_channels=planes[-1],
                               planes=planes, layers=layers,
                               num_top_down=opt.mm_voxfe_ntd, conv0_kernel_size=5, block=ECABasicBlock)
         self.vox_pool = MinkGeM()
-        
-        self.fuseblocktoshallow = FuseBlockToShallow(dims=[opt.mm_stg2fuse_dim for e in range(len(planes))],
-                                                     img_dims=[int(e) for e in opt.mm_imgfe_planes.split('_')],
-                                                     vox_dims=[int(e) for e in opt.mm_voxfe_planes.split('_')],
-                                                     bev_dims=[int(e) for e in opt.mm_bevfe_planes.split('_')]) 
-        # 96_192_384
+
+        img_dims = [int(e) for e in opt.mm_imgfe_planes.split('_')]
+        if 'dinov2' in opt.mm_imgfe:
+            # If using DINOv2, we only have one feature map level.
+            # We wrap it in a list of length matching planes/dims to satisfy FuseBlockToShallow
+            img_dims = [opt.mm_imgfe_dim for _ in range(len(planes))]
+
+        # Ensure img_dims are correctly passed to FuseBlockToShallow
+        self.fuseblocktoshallow = FuseBlockToShallow(dims=[opt.mm_stg2fuse_dim for _ in range(len(planes))],
+                                                     img_dims=img_dims,
+                                                     vox_dims=planes,
+                                                     bev_dims=[int(e) for e in opt.mm_bevfe_planes.split('_')])
         self.stg2fuseblock = Stage2FuseBlockAdd(fusedim=opt.mm_stg2fuse_dim, imgdim=opt.mm_imgfe_dim, bevdim=opt.mm_bevfe_dim, voxdim=opt.mm_voxfe_dim)
         self.stg2fusefc = nn.Linear(opt.mm_stg2fuse_dim, opt.mm_stg2fuse_dim)
 
@@ -63,7 +81,15 @@ class MM(nn.Module):
         self.stg2image_weight = nn.Parameter(torch.tensor(opt.stg2imagevox_weight, dtype=torch.float32), requires_grad=opt.stg2imagevox_learnweight)
         self.stg2vox_weight = nn.Parameter(torch.tensor(opt.stg2imagevox_weight, dtype=torch.float32), requires_grad=opt.stg2imagevox_learnweight)
         self.stg2fuse_weight = nn.Parameter(torch.tensor(opt.stg2fuse_weight, dtype=torch.float32), requires_grad=opt.stg2fuse_learnweight)
-        
+
+        if 'dinov2' in opt.mm_imgfe:
+            self.image_proj = MLP(opt.mm_imgfe_dim, opt.features_dim)
+        else:
+            self.image_proj = nn.Identity()
+
+        self.vox_proj = MLP(planes[-1], opt.features_dim)
+        self.stg2image_proj = MLP(opt.mm_imgfe_dim, opt.features_dim)
+        self.stg2vox_proj = MLP(opt.mm_voxfe_dim, opt.features_dim)
 
 
     # ====  query
@@ -77,16 +103,22 @@ class MM(nn.Module):
         output = []
         if 'image' in opt.output_type:
             imagefeatmap, imagefeatmaplist = self.image_fe(image)
+            if 'dinov2' in opt.mm_imgfe:
+                planes = [int(x) for x in opt.mm_voxfe_planes.split('_')]
+                imagefeatmaplist = [imagefeatmap for _ in range(len(planes))]
+
             imagefeatvec = self.image_pool(imagefeatmap)
             imagefeatvec = imagefeatvec.flatten(1)
+            imagefeatvec = self.image_proj(imagefeatvec)
             if opt.output_l2 is True:
                 imagefeatvec = F.normalize(imagefeatvec, dim=-1)
             imagefeatvec_org = imagefeatvec
             output.append(imagefeatvec * self.image_weight)
         if 'vox' in opt.output_type:
-            sptensor = ME.SparseTensor(features=data_dict['features'], coordinates=data_dict['coords'])
+            sptensor = ME.SparseTensor(features=data_dict['features'], coordinates=data_dict['coords'].int())
             voxfeatmap, voxfeatmaplist = self.vox_fe(sptensor)
             voxfeatvec = self.vox_pool(voxfeatmap)
+            voxfeatvec = self.vox_proj(voxfeatvec)
             if opt.output_l2 is True:
                 voxfeatvec = F.normalize(voxfeatvec, dim=-1)
             voxfeatvec_org = voxfeatvec
@@ -114,6 +146,8 @@ class MM(nn.Module):
         # ==== stage-2 fusion, ME
         if 'vox' in opt.output_type:
             stg2fusevec, stg2imagevec, stg2bevvec, stg2voxvec = self.stg2fuseblock(imagefeatmap, None, voxfeatmap, output[-1],type='vox')
+            stg2imagevec = self.stg2image_proj(stg2imagevec)
+            stg2voxvec = self.stg2vox_proj(stg2voxvec)
 
         stg2fusevec = self.stg2fusefc(stg2fusevec)
 

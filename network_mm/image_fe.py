@@ -3,6 +3,7 @@
 
 
 
+import torch
 import torch.nn as nn
 import torchvision
 
@@ -87,6 +88,12 @@ class ImageFE(nn.Module):
                     layers_list[i] = layers_list[i][:self.layers[3]]
             self.fe.features = nn.Sequential(*layers_list)
 
+        elif self.fe_type == 'dinov2_vitl14':
+            self.fe = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitl14')
+            self.last_dim = 2048 # 1024 (CLS) + 1024 (Patch)
+            for param in self.fe.parameters():
+                param.requires_grad = False
+
         else:
             raise NotImplementedError
         
@@ -148,7 +155,27 @@ class ImageFE(nn.Module):
             if i in [1,3,5]: 
                 out.append(x)
         return out
-    
+
+    def forward_dino(self, x):
+        # out is a dict containing 'x_norm_clstoken' and 'x_norm_patchtokens'
+        out = self.fe.forward_features(x)
+        cls_token = out["x_norm_clstoken"]       # [B, 1024]
+        patch_tokens = out["x_norm_patchtokens"] # [B, N, 1024]
+
+        b, n, c = patch_tokens.shape
+        # Calculate height and width based on input image and patch size (14)
+        h, w = x.shape[-2] // 14, x.shape[-1] // 14
+        assert h * w == n, f"Patch count mismatch: {h}*{w} != {n}"
+
+        patch_feat_map = patch_tokens.transpose(1, 2).reshape(b, c, h, w) # [B, 1024, H, W]
+
+        # Expand CLS token spatially to [B, 1024, H, W]
+        cls_feat_map = cls_token.view(b, c, 1, 1).expand(-1, -1, h, w)
+
+        # Concat CLS and Patch tokens along channel dimension: [B, 2048, H, W]
+        fused_feat_map = torch.cat([patch_feat_map, cls_feat_map], dim=1)
+
+        return [fused_feat_map]
 
     def forward(self, x):
         if self.fe_type in ['resnet18', 'resnet34']:

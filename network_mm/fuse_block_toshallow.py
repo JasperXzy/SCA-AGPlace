@@ -22,12 +22,15 @@ class FuseBlockToShallow(nn.Module):
         for i in range(len(dims)):
             diffblock = DiffBlock(dim=dims[-1], ode_dim=dims[-1])
             self.blocks.append(diffblock)
-            if i < len(dims)-1:
-                self.updimsimg.append(nn.Linear(self.img_dims[i], dims[-1]))
-                self.updimsvox.append(nn.Linear(self.vox_dims[i], dims[-1]))
-            else:
+            if self.img_dims[i] == dims[-1]:
                 self.updimsimg.append(nn.Identity())
+            else:
+                self.updimsimg.append(nn.Linear(self.img_dims[i], dims[-1]))
+
+            if self.vox_dims[i] == dims[-1]:
                 self.updimsvox.append(nn.Identity())
+            else:
+                self.updimsvox.append(nn.Linear(self.vox_dims[i], dims[-1]))
             
         # self.cde = DiffBlock(dim=dims[-1], ode_dim=dims[-1])
 
