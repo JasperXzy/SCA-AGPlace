@@ -141,6 +141,7 @@ def nuscenes_collate_fn(batch):
     coords = coords[:,1:]
     coords = PCRandomRotation(max_theta=5, max_theta2=0, axis=np.array([0, 0, 1]))(coords) # CPU intense
     coords = torch.cat([batchids, coords], dim=1)
+    coords = coords.int()
     feats = torch.ones([coords.shape[0], 1]).float()
 
     # feats = torch.ones([coords.shape[0], 1]).float()
@@ -228,6 +229,7 @@ def nuscenes_collate_fn_cache_q(batch):
     coords = PCRandomRotation(max_theta=5, max_theta2=0, axis=np.array([0, 0, 1]))(coords) # CPU intense
     # coords = coords * 0 # for test
     coords = torch.cat([batchids, coords], dim=1)
+    coords = coords.int()
     feats = torch.ones([coords.shape[0], 1]).float()
     query_location = [e[0]['query_location'] for e in batch]
     query_eastnorth = torch.stack([e[0]['query_eastnorth'] for e in batch])
@@ -287,7 +289,7 @@ def load_dbimage(datapath, split):
     if split == 'train':
         tf = TVT.Compose([
             # TVT.CenterCrop(opt.db_cropsize),
-            TVT.Resize(opt.db_resize, antialias=True), 
+            TVT.Resize((opt.db_resize, opt.db_resize), antialias=True),
             # TVT.ColorJitter(brightness=opt.db_jitter, contrast=opt.db_jitter, saturation=opt.db_jitter, hue=min(0.5, opt.db_jitter)),
             TVT.ToTensor(),
             TVT.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
@@ -296,7 +298,7 @@ def load_dbimage(datapath, split):
     elif split == 'test':
         tf = TVT.Compose([
             # TVT.CenterCrop(opt.db_cropsize),
-            TVT.Resize(opt.db_resize, antialias=True), 
+            TVT.Resize((opt.db_resize, opt.db_resize), antialias=True),
             TVT.ToTensor(),
             TVT.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             # TVT.Normalize(mean=0.5, std=0.22)
@@ -605,11 +607,11 @@ def load_sensordata_from_sampletoken(nusc, sample_token):
             datapath[-2] += f'_size{256}' 
             datapath = '/'.join(datapath)
             image = Image.open(datapath)
-            tf = TVT.Compose([TVT.Resize(192, antialias=True),  # 192 to support 4090
+            tf = TVT.Compose([TVT.Resize((opt.q_resize, opt.q_resize), antialias=True),
                               TVT.ToTensor(),
                               TVT.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
                               ])
-            image = tf(image)   
+            image = tf(image)
             sensordatas[sensorname] = image
 
     # Stack

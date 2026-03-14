@@ -26,7 +26,7 @@ opt = parse_arguments()
 def ME_broadcast_add(sptensor, vec):
     assert isinstance(sptensor, ME.SparseTensor)
     assert isinstance(vec, torch.Tensor)
-    vec_sp = ME.SparseTensor(vec, coordinate_map_key=sptensor.coordinate_map_key, 
+    vec_sp = ME.SparseTensor(vec, coordinate_map_key=sptensor.coordinate_map_key,
                              coordinate_manager=sptensor.coordinate_manager)
     output = ME.MinkowskiBroadcastAddition()(sptensor, vec_sp)
     return output
@@ -34,7 +34,7 @@ def ME_broadcast_add(sptensor, vec):
 def ME_broadcast_mul(sptensor, vec):
     assert isinstance(sptensor, ME.SparseTensor)
     assert isinstance(vec, torch.Tensor)
-    vec_sp = ME.SparseTensor(vec, coordinate_map_key=sptensor.coordinate_map_key, 
+    vec_sp = ME.SparseTensor(vec, coordinate_map_key=sptensor.coordinate_map_key,
                              coordinate_manager=sptensor.coordinate_manager)
     output = ME.MinkowskiBroadcastMultiplication()(sptensor, vec_sp)
     return output

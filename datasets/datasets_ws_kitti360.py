@@ -237,14 +237,14 @@ def load_qimage(datapath, split):
     image = Image.open(datapath)
     image = image.convert('RGB')
     if split == 'train':
-        tf = TVT.Compose([TVT.Resize(opt.q_resize), 
+        tf = TVT.Compose([TVT.Resize((opt.q_resize, opt.q_resize)),
                         TVT.ColorJitter(brightness=opt.q_jitter, contrast=opt.q_jitter, saturation=opt.q_jitter, hue=min(0.5, opt.q_jitter)),
                         TVT.ToTensor(),
                         #   TVT.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
                         TVT.Normalize(mean=0.5, std=0.22)
                         ])
     elif split == 'test':
-        tf = TVT.Compose([TVT.Resize(opt.q_resize), 
+        tf = TVT.Compose([TVT.Resize((opt.q_resize, opt.q_resize)),
                         TVT.ToTensor(),
                         #   TVT.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
                         TVT.Normalize(mean=0.5, std=0.22)
@@ -260,7 +260,7 @@ def load_dbimage(datapath, split):
     if split == 'train':
         tf = TVT.Compose([
             TVT.CenterCrop(opt.db_cropsize),
-            TVT.Resize(opt.db_resize), 
+            TVT.Resize((opt.db_resize, opt.db_resize)),
             TVT.ColorJitter(brightness=opt.db_jitter, contrast=opt.db_jitter, saturation=opt.db_jitter, hue=min(0.5, opt.db_jitter)),
             TVT.ToTensor(),
         #   TVT.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
@@ -269,7 +269,7 @@ def load_dbimage(datapath, split):
     elif split == 'test':
         tf = TVT.Compose([
             TVT.CenterCrop(opt.db_cropsize),
-            TVT.Resize(opt.db_resize), 
+            TVT.Resize((opt.db_resize, opt.db_resize)),
             TVT.ToTensor(),
         #   TVT.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             TVT.Normalize(mean=0.5, std=0.22)
