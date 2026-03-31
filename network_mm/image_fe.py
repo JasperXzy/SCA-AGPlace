@@ -175,12 +175,13 @@ class ImageFE(nn.Module):
 
         # Manually forward through blocks, collecting outputs at target layers
         x_tokens = self.fe.prepare_tokens_with_masks(x)
+        last_block_idx = len(self.fe.blocks) - 1
         outputs = []
         for i, blk in enumerate(self.fe.blocks):
             x_tokens = blk(x_tokens)
             if i in target_blocks:
-                normed = self.fe.norm(x_tokens)
-                patch_tokens = normed[:, 1:]  # remove CLS token, [B, N, 1024]
+                tokens = self.fe.norm(x_tokens) if i == last_block_idx else x_tokens
+                patch_tokens = tokens[:, 1:]  # remove CLS token, [B, N, 1024]
                 b, n, c = patch_tokens.shape
                 assert h * w == n, f"Patch count mismatch: {h}*{w} != {n}"
                 feat_map = patch_tokens.transpose(1, 2).reshape(b, c, h, w)
