@@ -66,10 +66,10 @@ def parse_arguments():
     parser.add_argument("--lrdino", type=float, default=0.0)
     parser.add_argument("--unfreeze_dino_mode", type=str, default="frozen", choices=["frozen", "last2", "full"])
     parser.add_argument("--dino_extract_blocks", type=str, default="7_15_23", help="Transformer block indices to extract multi-layer features from DINOv2")
-    parser.add_argument("--utonia_pretrained", type=str, default="none", help="Load Utonia pretrained weights: 'none', 'utonia' (HF download), or local file path e.g. ~/.cache/utonia/ckpt/utonia.pth")
-    parser.add_argument("--unfreeze_utonia_mode", type=str, default="frozen", choices=["frozen", "last1", "full"], help="Utonia freeze mode: frozen=all frozen, last1=stage4 only (~40M/29%%), full=all (~137M)")
-    parser.add_argument("--lrutonia", type=float, default=0.0, help="Learning rate for unfrozen Utonia parameters")
-    parser.add_argument("--utonia_extract_stages", type=str, default="1_2_3", help="PTv3 encoder stages to extract for ODE fusion")
+    parser.add_argument("--utonia_pretrained", type=str, default="utonia", help="Load Utonia pretrained weights: 'none', 'utonia' (HF download), or local file path e.g. ~/.cache/utonia/ckpt/utonia.pth")
+    parser.add_argument("--unfreeze_utonia_mode", type=str, default="last1", choices=["frozen", "last1", "full"], help="Utonia freeze mode: frozen=all frozen, last1=stage4 only (~40M/29%%), full=all (~137M)")
+    parser.add_argument("--lrutonia", type=float, default=1e-5, help="Learning rate for unfrozen Utonia parameters")
+    parser.add_argument("--utonia_extract_stages", type=str, default="0_2_4", help="PTv3 encoder stages to extract for ODE fusion")
     parser.add_argument('--resize', type=int, default=[256,256], nargs=2, help="Resizing shape for images (HxW).") # database transform
     parser.add_argument('--color_jitter', type=float, default=0) # query transform
     parser.add_argument('--quant_size', type=float, default=2) # query transform

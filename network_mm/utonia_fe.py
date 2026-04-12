@@ -126,47 +126,10 @@ class UtoniaFE(nn.Module):
             nn.Linear(self.utonia_channels[i], planes[i]) for i in range(len(planes))
         ])
 
-    @staticmethod
-    def _estimate_normals(coords, offset, k=20, chunk_size=2048):
-        """Estimate per-point normals via PCA on k-nearest neighbors.
-        Uses chunked distance computation to avoid O(N^2) memory.
-        Args:
-            coords: FloatTensor [N, 3]
-            offset: LongTensor [B] — cumulative point counts
-            k: number of neighbors for PCA
-            chunk_size: process this many query points at a time
-        Returns:
-            normals: FloatTensor [N, 3]
-        """
-        normals = torch.zeros_like(coords)
-        start = 0
-        for b in range(len(offset)):
-            end = offset[b].item()
-            pts = coords[start:end]  # [Nb, 3]
-            n_pts = pts.shape[0]
-            k_actual = min(k, n_pts)
-
-            # Chunked KNN to avoid [Nb, Nb] distance matrix
-            all_knn_idx = torch.empty(n_pts, k_actual, dtype=torch.long)
-            for c_start in range(0, n_pts, chunk_size):
-                c_end = min(c_start + chunk_size, n_pts)
-                dists = torch.cdist(pts[c_start:c_end], pts)  # [chunk, Nb]
-                _, idx = dists.topk(k_actual, dim=1, largest=False)
-                all_knn_idx[c_start:c_end] = idx
-
-            # PCA: compute covariance of each neighborhood
-            neighbors = pts[all_knn_idx]  # [Nb, k, 3]
-            centroid = neighbors.mean(dim=1, keepdim=True)  # [Nb, 1, 3]
-            centered = neighbors - centroid  # [Nb, k, 3]
-            cov = torch.bmm(centered.transpose(1, 2), centered)  # [Nb, 3, 3]
-
-            # Smallest eigenvector = normal direction
-            eigenvalues, eigenvectors = torch.linalg.eigh(cov)  # sorted ascending
-            normal = eigenvectors[:, :, 0]  # [Nb, 3] — smallest eigenvalue
-
-            normals[start:end] = normal
-            start = end
-        return normals
+    # Fixed scene scale for KITTI-360 outdoor normalization of the 9ch feat's xyz part.
+    # Keeps feat magnitudes (~[0,2]) comparable to rgb ([0,1]) and normals ([-1,1])
+    # while preserving consistent scale across samples (unlike per-sample max).
+    FEAT_SCALE = 50.0
 
     def forward(self, data_dict):
         """
@@ -175,15 +138,20 @@ class UtoniaFE(nn.Module):
         - grid_coord: IntTensor of [N, 3]
         - feat: FloatTensor of [N, 3] (unused, overwritten internally)
         - rgb: FloatTensor of [N, 3] (projected RGB, 0-1; zeros where unavailable)
+        - normal: FloatTensor of [N, 3] (precomputed per-point normals)
         - offset: IntTensor or LongTensor of [B]
         """
-        # 1. Per-batch centering of coord and grid_coord
         grid_coord = data_dict['grid_coord'].clone()
         coord = data_dict['coord'].clone()
         offset = data_dict['offset']
         rgb = data_dict.get('rgb', torch.zeros_like(coord))
+        normals = data_dict.get('normal', torch.zeros_like(coord))
         batch = offset2batch(offset)
 
+        # Per-batch centering only. No per-sample range normalization:
+        # grid_coord must remain at its true integer scale so PTv3's
+        # space-filling-curve ordering and patch partitioning reflect
+        # real spatial relationships.
         for b in range(len(offset)):
             mask = batch == b
             if mask.sum() > 0:
@@ -191,17 +159,13 @@ class UtoniaFE(nn.Module):
                 grid_coord[mask] = grid_coord[mask] - grid_min
                 coord_min = coord[mask].min(dim=0)[0]
                 coord[mask] = coord[mask] - coord_min
-                # Normalize to unit range to match pretrained indoor-scale distribution
-                coord_range = coord[mask].max(dim=0)[0].clamp(min=1e-6)
-                coord[mask] = coord[mask] / coord_range.max()
 
-        # 2. Estimate normals from centered coordinates
-        normals = self._estimate_normals(coord, offset, k=20)
-
+        # 9ch feat: xyz uses a FIXED scale (not per-sample max) so feature
+        # magnitudes are stable across samples. grid_coord stays unscaled.
+        feat_xyz = coord / self.FEAT_SCALE
         data_dict['grid_coord'] = grid_coord
         data_dict['coord'] = coord
-        # 9ch feat: xyz (centered+normalized) + rgb + normals
-        data_dict['feat'] = torch.cat([coord, rgb, normals], dim=1)
+        data_dict['feat'] = torch.cat([feat_xyz, rgb, normals], dim=1)
         point = Point(data_dict)
 
         # 2. Forward pass through PTv3 encoder

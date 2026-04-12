@@ -33,9 +33,90 @@ from pc_augmentation import (
 
 
 from datasets.kitti360_calib import get_calibration, colorize_points
+import open3d as o3d
 
 from tools.options import parse_arguments
 opt = parse_arguments()
+
+
+def estimate_normals_o3d(pts, k=30):
+    """Per-point normal estimation via Open3D, matching the Utonia paper:
+        "Surface normals are estimated with Open3D, including directions
+         from points to the LiDAR center."
+
+    Args:
+        pts: np.ndarray [N, 3] (velodyne XYZ)
+        k: KNN neighborhood size (paper uses 30)
+    Returns:
+        normals: np.ndarray [N, 3] float32, oriented toward the LiDAR origin (0,0,0)
+    """
+    n = pts.shape[0]
+    if n < 3:
+        return np.zeros((n, 3), dtype=np.float32)
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(pts.astype(np.float64))
+    pcd.estimate_normals(
+        search_param=o3d.geometry.KDTreeSearchParamKNN(knn=min(k, n))
+    )
+    # Critical: orient every normal to point TOWARD the LiDAR sensor (origin in
+    # velodyne frame). Without this, PCA-derived normals have random sign and
+    # become a high-frequency noise channel for the pretrained Utonia encoder.
+    pcd.orient_normals_towards_camera_location(camera_location=np.array([0.0, 0.0, 0.0]))
+    normals = np.asarray(pcd.normals, dtype=np.float32)
+    return normals
+
+
+def _rand_rotation_outdoor_scene():
+    """Full yaw (z) rotation + mild roll/pitch perturbations, matching
+    Utonia outdoor scene-level augmentation (Sec 4.1):
+        z in [-pi, pi], x/y in [-pi/16, pi/16].
+    """
+    theta_z = 2.0 * np.pi * (np.random.rand() - 0.5)              # [-pi, pi]
+    theta_x = (np.pi / 16.0) * 2.0 * (np.random.rand() - 0.5)     # [-pi/16, pi/16]
+    theta_y = (np.pi / 16.0) * 2.0 * (np.random.rand() - 0.5)
+    cz, sz = np.cos(theta_z), np.sin(theta_z)
+    cx, sx = np.cos(theta_x), np.sin(theta_x)
+    cy, sy = np.cos(theta_y), np.sin(theta_y)
+    Rz = np.array([[cz, -sz, 0.0], [sz,  cz, 0.0], [0.0, 0.0, 1.0]], dtype=np.float32)
+    Ry = np.array([[cy,  0.0, sy], [0.0, 1.0, 0.0], [-sy, 0.0, cy]], dtype=np.float32)
+    Rx = np.array([[1.0, 0.0, 0.0], [0.0, cx, -sx], [0.0, sx, cx]], dtype=np.float32)
+    return (Rz @ Ry @ Rx).astype(np.float32)
+
+
+def _rand_scale_jitter(eta=1.1):
+    """Isotropic multiplicative rescale r ~ exp(U(-log eta, log eta)).
+    Matches Sec A.2 / Sec 4.1: ±10% scale jitter for scene-level data.
+    """
+    log_eta = np.log(eta)
+    return float(np.exp(np.random.uniform(-log_eta, log_eta)))
+
+
+def _rand_anisotropic_jitter(eta=1.1):
+    """Anisotropic per-axis jitter j ~ exp(U(-log eta, log eta)^3), matching
+    DINOv3-style coordinate augmentation used by Utonia (Sec 3.3, Sec A.2).
+    """
+    log_eta = np.log(eta)
+    return np.exp(np.random.uniform(-log_eta, log_eta, size=3)).astype(np.float32)
+
+
+def _causal_modality_blind(rgb, normal, p_drop_rgb=0.3, p_drop_normal=0.3):
+    """Per-sample (per-data) causal modality blinding (Sec 3.1).
+    Randomly zero out the entire RGB or Normal modality for a sample, so the
+    model does not over-rely on any single modality. Matches the
+    with-color / without-color partitioning in Tab. 7(d).
+    """
+    if np.random.rand() < p_drop_rgb:
+        rgb = np.zeros_like(rgb)
+    if np.random.rand() < p_drop_normal:
+        normal = np.zeros_like(normal)
+    return rgb, normal
+
+
+def _dedup_grid(coords_int_np):
+    """Return indices to keep (order-preserving) so that int grid coords are unique."""
+    _, keep = np.unique(coords_int_np, axis=0, return_index=True)
+    keep.sort()
+    return keep
 
 
 
@@ -119,29 +200,70 @@ def kitti360_collate_fn(batch):
     query_bev = torch.stack([e[0]['query_bev'] for e in batch])
     query_sph = torch.stack([e[0]['query_sph'] for e in batch])
 
-    # Build raw float coords and apply rotation BEFORE integer quantization
-    query_pc_float = [torch.from_numpy(p).float() if isinstance(p, np.ndarray) else p.float() for p in query_pc]
-    raw_coords = torch.cat(query_pc_float, dim=0)  # [N_total, 3] float
-    point_counts = [len(p) for p in query_pc_float]
-    batch_ids = torch.cat([torch.full((n, 1), i, dtype=torch.int32) for i, n in enumerate(point_counts)])
-
-    # Apply rotation to raw float coords (preserves sub-voxel precision)
-    raw_coords_rotated = PCRandomRotation(max_theta=5, max_theta2=0, axis=np.array([0, 0, 1]))(raw_coords)
-    if isinstance(raw_coords_rotated, np.ndarray):
-        raw_coords_rotated = torch.from_numpy(raw_coords_rotated).float()
-
-    # For ME: integer coords from rotated float
-    coords = torch.cat([batch_ids, raw_coords_rotated.int()], dim=1)
-    feats = torch.ones([coords.shape[0], 1]).float()
-
-    # For Utonia: real float coords (rotated) + separately quantized grid coords
-    utonia_offset = torch.cumsum(torch.tensor(point_counts), dim=0)
-    utonia_feat = raw_coords_rotated.float()  # [N, 3] xyz only, centering done in UtoniaFE.forward
-
-    # Per-point RGB from fisheye camera projection
+    # Per-point RGB and normals (normals precomputed in __getitem__)
     query_pc_rgb = [e[0]['query_pc_rgb'] for e in batch]
-    query_pc_rgb_float = [torch.from_numpy(r).float() if isinstance(r, np.ndarray) else r.float() for r in query_pc_rgb]
-    utonia_rgb = torch.cat(query_pc_rgb_float, dim=0)  # [N_total, 3]
+    query_pc_normal = [e[0]['query_pc_normal'] for e in batch]
+
+    # Per-sample: apply SAME small rotation to coords and normals, then dedup int grid
+    utonia_coord_list, utonia_grid_list, utonia_rgb_list, utonia_normal_list = [], [], [], []
+    utonia_point_counts, utonia_batch_ids = [], []
+    me_coord_list, me_batch_ids = [], []
+    for i, p in enumerate(query_pc):
+        p_np = p if isinstance(p, np.ndarray) else p.numpy()
+        p_np = p_np.astype(np.float32, copy=False)
+        r_np = query_pc_rgb[i]
+        if not isinstance(r_np, np.ndarray):
+            r_np = r_np.numpy()
+        r_np = r_np.astype(np.float32, copy=False)
+        n_np = query_pc_normal[i]
+        if not isinstance(n_np, np.ndarray):
+            n_np = n_np.numpy()
+        n_np = n_np.astype(np.float32, copy=False)
+
+        # Scene-level rigid augmentation (Utonia paper Sec 4.1):
+        # full yaw (z) + mild roll/pitch, isotropic scale jitter (±10%),
+        # plus DINOv3-style anisotropic per-axis jitter (Sec 3.3 / A.2).
+        R = _rand_rotation_outdoor_scene()          # [3,3]
+        s = _rand_scale_jitter(eta=1.1)             # scalar
+        aniso = _rand_anisotropic_jitter(eta=1.1)   # [3]
+        p_rot = (p_np @ R) * (s * aniso)
+        # Normals are rotation-only (scale does not affect unit normals);
+        # keep them unit-length after the rigid rotation.
+        n_rot = n_np @ R
+
+        # Per-sample Causal Modality Blinding (Sec 3.1): randomly zero RGB or normal
+        r_np_b, n_rot_b = _causal_modality_blind(r_np, n_rot, p_drop_rgb=0.3, p_drop_normal=0.3)
+
+        # Int grid from augmented coords and dedup
+        p_int = p_rot.astype(np.int32)
+        keep = _dedup_grid(p_int)
+        p_rot_k = p_rot[keep]
+        p_int_k = p_int[keep]
+        r_k = r_np_b[keep] if r_np_b.shape[0] == p_np.shape[0] else np.zeros((len(keep), 3), dtype=np.float32)
+        n_k = n_rot_b[keep]
+
+        n_pts = len(keep)
+        utonia_coord_list.append(torch.from_numpy(p_rot_k))
+        utonia_grid_list.append(torch.from_numpy(p_int_k))
+        utonia_rgb_list.append(torch.from_numpy(r_k))
+        utonia_normal_list.append(torch.from_numpy(n_k))
+        utonia_point_counts.append(n_pts)
+        utonia_batch_ids.append(torch.full((n_pts, 1), i, dtype=torch.int32))
+
+        # For ME (MinkFPN fallback): use pre-dedup rotated int (ME handles dedup internally)
+        me_coord_list.append(torch.from_numpy(p_int.astype(np.int32)))
+        me_batch_ids.append(torch.full((p_int.shape[0], 1), i, dtype=torch.int32))
+
+    utonia_coord = torch.cat(utonia_coord_list, dim=0).float()
+    utonia_grid_coord = torch.cat(utonia_grid_list, dim=0).int()
+    utonia_rgb = torch.cat(utonia_rgb_list, dim=0).float()
+    utonia_normal = torch.cat(utonia_normal_list, dim=0).float()
+    utonia_offset = torch.cumsum(torch.tensor(utonia_point_counts), dim=0)
+
+    # ME inputs (kept for MinkFPN fallback)
+    coords = torch.cat([torch.cat(me_batch_ids, dim=0), torch.cat(me_coord_list, dim=0)], dim=1)
+    feats = torch.ones([coords.shape[0], 1]).float()
+    utonia_feat = utonia_coord.clone()  # placeholder, overwritten inside UtoniaFE
 
 
     triplets_local_indexes = torch.cat([e[1][None] for e in batch])
@@ -162,10 +284,11 @@ def kitti360_collate_fn(batch):
         # 'negative_db_maps': negative_db_maps,
         'db_map': db_map,
         'db_eastnorth': db_eastnorth,
-        'utonia_coord': raw_coords_rotated.float(),    # real XYZ in float (rotated)
-        'utonia_grid_coord': raw_coords_rotated.int(), # quantized after rotation
-        'utonia_feat': utonia_feat,                    # [N, 3]: xyz coordinates
-        'utonia_rgb': utonia_rgb,                      # [N, 3]: projected RGB (0-1)
+        'utonia_coord': utonia_coord,                 # [N_dedup, 3] float xyz (rotated)
+        'utonia_grid_coord': utonia_grid_coord,       # [N_dedup, 3] int32 (deduped)
+        'utonia_feat': utonia_feat,                   # placeholder, overwritten in UtoniaFE
+        'utonia_rgb': utonia_rgb,                     # [N_dedup, 3] projected RGB (0-1)
+        'utonia_normal': utonia_normal,               # [N_dedup, 3] precomputed normals
         'utonia_offset': utonia_offset,
     }
     # return images, torch.cat(tuple(triplets_local_indexes)), triplets_global_indexes
@@ -223,24 +346,51 @@ def kitti360_collate_fn_cache_q(batch):
     query_bev = torch.stack([e[0]['query_bev'] for e in batch])
     query_sph = torch.stack([e[0]['query_sph'] for e in batch])
 
-    # Build raw float coords (no rotation at inference)
-    query_pc_float = [torch.from_numpy(p).float() if isinstance(p, np.ndarray) else p.float() for p in query_pc]
-    raw_coords = torch.cat(query_pc_float, dim=0)  # [N_total, 3] float
-    point_counts = [len(p) for p in query_pc_float]
-    batch_ids = torch.cat([torch.full((n, 1), i, dtype=torch.int32) for i, n in enumerate(point_counts)])
-
-    # For ME: integer coords
-    coords = torch.cat([batch_ids, raw_coords.int()], dim=1)
-    feats = torch.ones([coords.shape[0], 1]).float()
-
-    # For Utonia
-    utonia_offset = torch.cumsum(torch.tensor(point_counts), dim=0)
-    utonia_feat = raw_coords.float()  # [N, 3] xyz only, centering done in UtoniaFE.forward
-
-    # Per-point RGB from fisheye camera projection
     query_pc_rgb = [e[0]['query_pc_rgb'] for e in batch]
-    query_pc_rgb_float = [torch.from_numpy(r).float() if isinstance(r, np.ndarray) else r.float() for r in query_pc_rgb]
-    utonia_rgb = torch.cat(query_pc_rgb_float, dim=0)  # [N_total, 3]
+    query_pc_normal = [e[0]['query_pc_normal'] for e in batch]
+
+    # Per-sample dedup (no rotation at inference); precomputed normals from __getitem__
+    utonia_coord_list, utonia_grid_list, utonia_rgb_list, utonia_normal_list = [], [], [], []
+    utonia_point_counts = []
+    me_coord_list, me_batch_ids = [], []
+    for i, p in enumerate(query_pc):
+        p_np = p if isinstance(p, np.ndarray) else p.numpy()
+        p_np = p_np.astype(np.float32, copy=False)
+        r_np = query_pc_rgb[i]
+        if not isinstance(r_np, np.ndarray):
+            r_np = r_np.numpy()
+        r_np = r_np.astype(np.float32, copy=False)
+        n_np = query_pc_normal[i]
+        if not isinstance(n_np, np.ndarray):
+            n_np = n_np.numpy()
+        n_np = n_np.astype(np.float32, copy=False)
+
+        p_int = p_np.astype(np.int32)
+        keep = _dedup_grid(p_int)
+        p_k = p_np[keep]
+        g_k = p_int[keep]
+        r_k = r_np[keep] if r_np.shape[0] == p_np.shape[0] else np.zeros((len(keep), 3), dtype=np.float32)
+        n_k = n_np[keep]
+
+        n_pts = len(keep)
+        utonia_coord_list.append(torch.from_numpy(p_k))
+        utonia_grid_list.append(torch.from_numpy(g_k))
+        utonia_rgb_list.append(torch.from_numpy(r_k))
+        utonia_normal_list.append(torch.from_numpy(n_k))
+        utonia_point_counts.append(n_pts)
+
+        me_coord_list.append(torch.from_numpy(p_int))
+        me_batch_ids.append(torch.full((p_int.shape[0], 1), i, dtype=torch.int32))
+
+    utonia_coord = torch.cat(utonia_coord_list, dim=0).float()
+    utonia_grid_coord = torch.cat(utonia_grid_list, dim=0).int()
+    utonia_rgb = torch.cat(utonia_rgb_list, dim=0).float()
+    utonia_normal = torch.cat(utonia_normal_list, dim=0).float()
+    utonia_offset = torch.cumsum(torch.tensor(utonia_point_counts), dim=0)
+
+    coords = torch.cat([torch.cat(me_batch_ids, dim=0), torch.cat(me_coord_list, dim=0)], dim=1)
+    feats = torch.ones([coords.shape[0], 1]).float()
+    utonia_feat = utonia_coord.clone()
 
 
     db_map = torch.stack([e[0]['db_map'] for e in batch])
@@ -261,10 +411,11 @@ def kitti360_collate_fn_cache_q(batch):
         # 'negative_db_maps': negative_db_maps,
         'db_map': db_map,
         'query_eastnorth': query_eastnorth,
-        'utonia_coord': raw_coords.float(),         # real XYZ in float
-        'utonia_grid_coord': raw_coords.int(),      # quantized
-        'utonia_feat': utonia_feat,                 # [N, 3]: xyz coordinates
-        'utonia_rgb': utonia_rgb,                   # [N, 3]: projected RGB (0-1)
+        'utonia_coord': utonia_coord,
+        'utonia_grid_coord': utonia_grid_coord,
+        'utonia_feat': utonia_feat,
+        'utonia_rgb': utonia_rgb,
+        'utonia_normal': utonia_normal,
         'utonia_offset': utonia_offset,
     }
     return output_dict, indices
@@ -546,7 +697,7 @@ class KITTI360BaseDataset(data.Dataset):
             qposedir = os.path.join(dataroot, 'data_poses', selectlocation, 'oxts/data')
             qimage00dir = os.path.join(dataroot, f'data_2d_raw_resize{resize}', selectlocation, 'image_00/data_rect')
             qimage02dir = os.path.join(dataroot, f'data_2d_raw_resize{resize}', selectlocation, 'image_02/data_rgb')
-            # qimage03dir = os.path.join(dataroot, f'data_2d_raw_resize{resize}', selectlocation, 'image_03/data_rgb')
+            qimage03dir = os.path.join(dataroot, f'data_2d_raw_resize{resize}', selectlocation, 'image_03/data_rgb')
             qimage0203dir = os.path.join(dataroot, 'data_2d_cat0203', selectlocation, 'image_0203/data_rgb')
             qpcnames = sorted(os.listdir(qpcdir))
             qimage00names = sorted(os.listdir(qimage00dir))
@@ -569,7 +720,7 @@ class KITTI360BaseDataset(data.Dataset):
                 qpcpath = os.path.join(qpcdir, qimage0203name.replace('.png','.bin'))
                 qimage00path = os.path.join(qimage00dir, qimage0203name.replace('.png','.png'))
                 qimage02path = os.path.join(qimage02dir, qimage0203name.replace('.png','.png'))
-                # qimage03path = os.path.join(qimage03dir, qimage0203name.replace('.png','.png'))
+                qimage03path = os.path.join(qimage03dir, qimage0203name.replace('.png','.png'))
                 qimage0203path = os.path.join(qimage0203dir, qimage0203name.replace('.png','.png'))
                 qposepath = os.path.join(qposedir, qimage0203name.replace('.png','.txt'))
                 # if not os.path.exists(qpcpath): continue
@@ -585,7 +736,7 @@ class KITTI360BaseDataset(data.Dataset):
                     'qposepath': qposepath,
                     'qimage00path': qimage00path,
                     'qimage02path': qimage02path,
-                    # 'qimage03path': qimage03path,
+                    'qimage03path': qimage03path,
                     'qimage0203path': qimage0203path,
                     'qpcpath': qpcpath,
                     'location': selectlocation,
@@ -667,6 +818,7 @@ class KITTI360BaseDataset(data.Dataset):
     
     def __getitem__(self, index):
         query_pc_rgb = np.zeros((1, 3), dtype=np.float32)  # default
+        query_pc_normal = np.zeros((1, 3), dtype=np.float32)
         if index >= self.database_num: # query
             # print(index)
             if opt.camnames == '00':
@@ -683,9 +835,12 @@ class KITTI360BaseDataset(data.Dataset):
                 if calib is not None:
                     info = self.database_queries_infos[index]
                     img02 = Image.open(info['qimage02path']).convert('RGB')
-                    query_pc_rgb = colorize_points(query_pc, img02, calib)
+                    img03 = Image.open(info['qimage03path']).convert('RGB')
+                    query_pc_rgb = colorize_points(query_pc, img02, img03, calib)
                 else:
                     query_pc_rgb = np.zeros((query_pc.shape[0], 3), dtype=np.float32)
+                # Precompute per-point normals once (CPU, parallel via num_workers)
+                query_pc_normal = estimate_normals_o3d(query_pc, k=30)
             else:
                 query_pc = torch.ones([1,3]).float()
                 query_sph = torch.empty(0)
@@ -717,6 +872,7 @@ class KITTI360BaseDataset(data.Dataset):
             'query_sph': query_sph,
             'query_pc': query_pc,
             'query_pc_rgb': query_pc_rgb,
+            'query_pc_normal': query_pc_normal,
             'db_map': db_map,
             'query_eastnorth': query_eastnorth
         }
@@ -853,13 +1009,17 @@ class KITTI360TripletsDataset(KITTI360BaseDataset):
             calib = get_calibration(opt.dataroot)
             if calib is not None:
                 img02 = Image.open(self.queries_infos[query_index]['qimage02path']).convert('RGB')
-                query_pc_rgb = colorize_points(query_pc, img02, calib)
+                img03 = Image.open(self.queries_infos[query_index]['qimage03path']).convert('RGB')
+                query_pc_rgb = colorize_points(query_pc, img02, img03, calib)
             else:
                 query_pc_rgb = np.zeros((query_pc.shape[0], 3), dtype=np.float32)
+            # Precompute per-point normals (CPU, parallelized by num_workers)
+            query_pc_normal = estimate_normals_o3d(query_pc, k=30)
         # query_pc = load_pc(file_path=self.queries_infos[query_index]['qpcpath'],split=self.split)
         else:
             query_pc = torch.ones([1,3]).float()
             query_pc_rgb = np.zeros((1, 3), dtype=np.float32)
+            query_pc_normal = np.zeros((1, 3), dtype=np.float32)
             query_sph = torch.empty(0)
             query_bev = torch.empty(0)
 
@@ -933,6 +1093,7 @@ class KITTI360TripletsDataset(KITTI360BaseDataset):
             'query_bev': query_bev,
             'query_pc': query_pc,
             'query_pc_rgb': query_pc_rgb,
+            'query_pc_normal': query_pc_normal,
             'query_eastnorth': query_eastnorth,
             'db_map': db_map,
             'db_eastnorth': db_eastnorth

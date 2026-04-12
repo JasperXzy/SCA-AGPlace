@@ -236,8 +236,8 @@ def main():
     if use_ddp:
         model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
         modelq = nn.SyncBatchNorm.convert_sync_batchnorm(modelq)
-        model = DDP(model, device_ids=[local_rank], find_unused_parameters=True)
-        modelq = DDP(modelq, device_ids=[local_rank], find_unused_parameters=True)
+        model = DDP(model, device_ids=[local_rank], find_unused_parameters=False)
+        modelq = DDP(modelq, device_ids=[local_rank], find_unused_parameters=False)
 
     # Unwrapped references for inference, save/load, optimizer param groups
     model_without_ddp = model.module if use_ddp else model

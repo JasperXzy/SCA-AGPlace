@@ -44,48 +44,10 @@ def _read_yaml_file(filepath):
     return yaml.safe_load(content)
 
 
-def load_calibration(calib_dir):
-    """Load KITTI-360 calibration from directory.
-
-    Returns dict with:
-      - T_velo_to_cam2: 4x4 transformation from velodyne to camera 02 frame
-      - fisheye: dict of fisheye intrinsic parameters for cam 02
-      - orig_width, orig_height: original fisheye image dimensions
-    """
-    calib_cam_to_velo_path = os.path.join(calib_dir, 'calib_cam_to_velo.txt')
-    calib_cam_to_pose_path = os.path.join(calib_dir, 'calib_cam_to_pose.txt')
-    fisheye_path = os.path.join(calib_dir, 'image_02.yaml')
-
-    for p in [calib_cam_to_velo_path, calib_cam_to_pose_path, fisheye_path]:
-        if not os.path.exists(p):
-            raise FileNotFoundError(
-                f"Calibration file not found: {p}\n"
-                "Download KITTI-360 calibration from: "
-                "https://www.cvlibs.net/datasets/kitti-360/download.php"
-            )
-
-    # calib_cam_to_velo: transforms cam0 points to velodyne frame (3x4)
-    lastrow = np.array([[0, 0, 0, 1]])
-    T_cam0_to_velo = np.concatenate(
-        (np.loadtxt(calib_cam_to_velo_path).reshape(3, 4), lastrow)
-    )
-
-    # calib_cam_to_pose: transforms each camera to pose (vehicle) frame
-    with open(calib_cam_to_pose_path, 'r') as fid:
-        T_cam0_to_pose = np.concatenate((_read_variable(fid, 'image_00', 3, 4), lastrow))
-        T_cam2_to_pose = np.concatenate((_read_variable(fid, 'image_02', 3, 4), lastrow))
-
-    # Chain: velo -> cam0 -> pose -> cam2
-    # p_cam0 = inv(T_cam0_to_velo) @ p_velo
-    # p_pose = T_cam0_to_pose @ p_cam0
-    # p_cam2 = inv(T_cam2_to_pose) @ p_pose
-    T_velo_to_cam2 = np.linalg.inv(T_cam2_to_pose) @ T_cam0_to_pose @ np.linalg.inv(T_cam0_to_velo)
-
-    # Fisheye intrinsics
-    fi = _read_yaml_file(fisheye_path)
-
-    calib = {
-        'T_velo_to_cam2': T_velo_to_cam2,
+def _build_fisheye_dict(T_velo_to_cam, fi):
+    """Package one fisheye camera's parameters into a flat dict."""
+    return {
+        'T_velo_to_cam': T_velo_to_cam,
         'xi': fi['mirror_parameters']['xi'],
         'k1': fi['distortion_parameters']['k1'],
         'k2': fi['distortion_parameters']['k2'],
@@ -96,93 +58,153 @@ def load_calibration(calib_dir):
         'orig_width': fi['image_width'],
         'orig_height': fi['image_height'],
     }
-    return calib
 
 
-def project_velo_to_fisheye(points, calib, img_w, img_h):
-    """Project velodyne 3D points to fisheye camera 02 pixel coordinates.
+def load_calibration(calib_dir):
+    """Load KITTI-360 calibration with BOTH fisheye cameras (image_02 + image_03).
+
+    Returns dict:
+        {
+            'cam02': {...fisheye params + T_velo_to_cam...},
+            'cam03': {...fisheye params + T_velo_to_cam...},
+        }
+    """
+    calib_cam_to_velo_path = os.path.join(calib_dir, 'calib_cam_to_velo.txt')
+    calib_cam_to_pose_path = os.path.join(calib_dir, 'calib_cam_to_pose.txt')
+    fisheye02_path = os.path.join(calib_dir, 'image_02.yaml')
+    fisheye03_path = os.path.join(calib_dir, 'image_03.yaml')
+
+    for p in [calib_cam_to_velo_path, calib_cam_to_pose_path, fisheye02_path, fisheye03_path]:
+        if not os.path.exists(p):
+            raise FileNotFoundError(
+                f"Calibration file not found: {p}\n"
+                "Download KITTI-360 calibration from: "
+                "https://www.cvlibs.net/datasets/kitti-360/download.php"
+            )
+
+    lastrow = np.array([[0, 0, 0, 1]])
+    T_cam0_to_velo = np.concatenate(
+        (np.loadtxt(calib_cam_to_velo_path).reshape(3, 4), lastrow)
+    )
+
+    with open(calib_cam_to_pose_path, 'r') as fid:
+        T_cam0_to_pose = np.concatenate((_read_variable(fid, 'image_00', 3, 4), lastrow))
+        T_cam2_to_pose = np.concatenate((_read_variable(fid, 'image_02', 3, 4), lastrow))
+        T_cam3_to_pose = np.concatenate((_read_variable(fid, 'image_03', 3, 4), lastrow))
+
+    # Chain: velo -> cam0 -> pose -> camX
+    T_velo_to_cam0 = np.linalg.inv(T_cam0_to_velo)
+    T_velo_to_cam2 = np.linalg.inv(T_cam2_to_pose) @ T_cam0_to_pose @ T_velo_to_cam0
+    T_velo_to_cam3 = np.linalg.inv(T_cam3_to_pose) @ T_cam0_to_pose @ T_velo_to_cam0
+
+    fi02 = _read_yaml_file(fisheye02_path)
+    fi03 = _read_yaml_file(fisheye03_path)
+
+    return {
+        'cam02': _build_fisheye_dict(T_velo_to_cam2, fi02),
+        'cam03': _build_fisheye_dict(T_velo_to_cam3, fi03),
+    }
+
+
+def project_velo_to_fisheye(points, fisheye, img_w, img_h):
+    """Project velodyne 3D points to one fisheye camera (MEI omnidirectional model).
 
     Args:
         points: [N, 3] numpy array of velodyne XYZ coordinates
-        calib: calibration dict from load_calibration()
-        img_w: actual (resized) image width
-        img_h: actual (resized) image height
+        fisheye: single-camera dict (e.g. calib['cam02'])
+        img_w, img_h: actual (resized) image dimensions
 
     Returns:
-        u, v: [N] pixel coordinates in the resized image
+        u, v: [N] float pixel coordinates in the resized image
         valid: [N] boolean mask for points with valid projection
     """
     N = points.shape[0]
 
-    # Transform to cam2 frame
     pts_hom = np.concatenate([points, np.ones((N, 1))], axis=1)  # [N, 4]
-    pts_cam = (calib['T_velo_to_cam2'] @ pts_hom.T).T[:, :3]  # [N, 3]
+    pts_cam = (fisheye['T_velo_to_cam'] @ pts_hom.T).T[:, :3]   # [N, 3]
 
-    # Only keep points in front of camera (positive Z)
     depth = pts_cam[:, 2]
     valid = depth > 0.1
 
-    # Fisheye (MEI omnidirectional) projection
-    norm = np.linalg.norm(pts_cam, axis=1)  # [N]
+    norm = np.linalg.norm(pts_cam, axis=1)
     norm = np.clip(norm, 1e-8, None)
 
     x = pts_cam[:, 0] / norm
     y = pts_cam[:, 1] / norm
     z = pts_cam[:, 2] / norm
 
-    xi = calib['xi']
+    xi = fisheye['xi']
     denom = z + xi
     denom = np.clip(np.abs(denom), 1e-8, None) * np.sign(denom + 1e-12)
     x = x / denom
     y = y / denom
 
-    # Radial distortion
-    k1, k2 = calib['k1'], calib['k2']
+    k1, k2 = fisheye['k1'], fisheye['k2']
     ro2 = x * x + y * y
     distort = 1 + k1 * ro2 + k2 * ro2 * ro2
     x = x * distort
     y = y * distort
 
-    # Apply intrinsics (in original image coordinates)
-    u_orig = calib['gamma1'] * x + calib['u0']
-    v_orig = calib['gamma2'] * y + calib['v0']
+    u_orig = fisheye['gamma1'] * x + fisheye['u0']
+    v_orig = fisheye['gamma2'] * y + fisheye['v0']
 
-    # Scale to resized image
-    scale_x = img_w / calib['orig_width']
-    scale_y = img_h / calib['orig_height']
+    scale_x = img_w / fisheye['orig_width']
+    scale_y = img_h / fisheye['orig_height']
     u = u_orig * scale_x
     v = v_orig * scale_y
 
-    # Update validity: must be within image bounds
     valid = valid & (u >= 0) & (u < img_w) & (v >= 0) & (v < img_h)
-
     return u, v, valid
 
 
-def colorize_points(points, image, calib):
-    """Get per-point RGB colors by projecting 3D points onto a fisheye image.
-
-    Args:
-        points: [N, 3] numpy array of velodyne XYZ coordinates
-        image: PIL Image or numpy array [H, W, 3] (uint8)
-        calib: calibration dict from load_calibration()
-
-    Returns:
-        rgb: [N, 3] numpy array of RGB values normalized to [0, 1].
-             Points outside the camera FOV have rgb = [0, 0, 0].
-    """
+def _colorize_single(points, image, fisheye):
+    """Project points into one fisheye image and return (rgb, valid)."""
     if isinstance(image, Image.Image):
         image = np.array(image.convert('RGB'))
-
     img_h, img_w = image.shape[:2]
-    u, v, valid = project_velo_to_fisheye(points, calib, img_w, img_h)
+    u, v, valid = project_velo_to_fisheye(points, fisheye, img_w, img_h)
 
     rgb = np.zeros((points.shape[0], 3), dtype=np.float32)
     if valid.any():
         u_int = np.clip(u[valid].astype(np.int32), 0, img_w - 1)
         v_int = np.clip(v[valid].astype(np.int32), 0, img_h - 1)
         rgb[valid] = image[v_int, u_int, :3].astype(np.float32) / 255.0
+    return rgb, valid
 
+
+def colorize_points(points, img02, img03, calib):
+    """Multi-view per-point RGB: project to BOTH fisheye cameras (image_02 and image_03)
+    and merge. Matches the Utonia paper convention:
+      "project image colors onto points using the provided calibration,
+       and assign signal-black to points not visible in any view."
+
+    Args:
+        points: [N, 3] velodyne XYZ
+        img02: PIL.Image or np.ndarray for the left fisheye, or None
+        img03: PIL.Image or np.ndarray for the right fisheye, or None
+        calib: dict with keys 'cam02', 'cam03' from load_calibration()
+
+    Returns:
+        rgb: [N, 3] float32 in [0,1]. Points seen by neither camera → [0,0,0].
+             Points seen by both cameras → average of the two samples.
+    """
+    N = points.shape[0]
+    rgb_sum = np.zeros((N, 3), dtype=np.float32)
+    count = np.zeros((N,), dtype=np.float32)
+
+    if img02 is not None and 'cam02' in calib:
+        rgb2, valid2 = _colorize_single(points, img02, calib['cam02'])
+        rgb_sum[valid2] += rgb2[valid2]
+        count[valid2] += 1.0
+
+    if img03 is not None and 'cam03' in calib:
+        rgb3, valid3 = _colorize_single(points, img03, calib['cam03'])
+        rgb_sum[valid3] += rgb3[valid3]
+        count[valid3] += 1.0
+
+    rgb = np.zeros((N, 3), dtype=np.float32)
+    seen = count > 0
+    rgb[seen] = rgb_sum[seen] / count[seen, None]
     return rgb
 
 
