@@ -1163,29 +1163,48 @@ class KITTI360TripletsDataset(KITTI360BaseDataset):
     @staticmethod
     def compute_cache_sep(args, model, subset_ds, cache_shape, modelq):
         """Compute the cache containing features of images, which is used to
-        find best positive and hardest negatives."""
-        # subset_dl = DataLoader(dataset=subset_ds, num_workers=args.num_workers,
-        #                        batch_size=args.infer_batch_size, shuffle=False,
-        #                        pin_memory=(args.device == "cuda"))
+        find best positive and hardest negatives.
+
+        DDP parallelism: when a process group is initialized, the db and q
+        dataloaders are sharded via DistributedSampler so each rank only
+        infers 1/world_size of the samples. Results are then all_gather'ed
+        so every rank ends up with the full cache (rank 0 uses it to mine
+        triplets, other ranks just wait at the next barrier).
+        """
+        import contextlib
+        import torch.distributed as dist
+        from torch.utils.data.distributed import DistributedSampler
+
+        ddp_on = dist.is_available() and dist.is_initialized()
+        rank = dist.get_rank() if ddp_on else 0
+        world = dist.get_world_size() if ddp_on else 1
+
         model = model.eval()
         modelq = modelq.eval()
 
         subset_ds_db = Subset(subset_ds.dataset, list(range(subset_ds.dataset.database_num)))
         subset_ds_q = Subset(subset_ds.dataset, list(range(subset_ds.dataset.database_num, len(subset_ds.dataset))))
+
+        if ddp_on:
+            db_sampler = DistributedSampler(subset_ds_db, shuffle=False, drop_last=False)
+            q_sampler = DistributedSampler(subset_ds_q, shuffle=False, drop_last=False)
+        else:
+            db_sampler = None
+            q_sampler = None
+
         subset_dl_db = DataLoader(dataset=subset_ds_db, num_workers=args.num_workers,
-                                 batch_size=args.infer_batch_size, shuffle=False,
+                                 batch_size=args.infer_batch_size,
+                                 sampler=db_sampler, shuffle=False,
                                  pin_memory=(args.device == "cuda"),
-                                 collate_fn=kitti360_collate_fn_cache_db
-                                 )
+                                 collate_fn=kitti360_collate_fn_cache_db)
         subset_dl_q = DataLoader(dataset=subset_ds_q, num_workers=args.num_workers,
-                                batch_size=args.infer_batch_size, shuffle=False,
+                                batch_size=args.infer_batch_size,
+                                sampler=q_sampler, shuffle=False,
                                 pin_memory=(args.device == "cuda"),
-                                collate_fn=kitti360_collate_fn_cache_q
-                                )
-        # RAMEfficient2DMatrix can be replaced by np.zeros, but using
-        # RAMEfficient2DMatrix is RAM efficient for full database mining.
-        cache = RAMEfficient2DMatrix(cache_shape, dtype=np.float32) # [db+q, c]
-        import contextlib
+                                collate_fn=kitti360_collate_fn_cache_q)
+
+        cache = RAMEfficient2DMatrix(cache_shape, dtype=np.float32)  # [db+q, c]
+
         amp_dt = getattr(args, 'amp_dtype', 'none')
         if amp_dt == 'bf16':
             amp_ctx = torch.autocast(device_type='cuda', dtype=torch.bfloat16)
@@ -1193,17 +1212,40 @@ class KITTI360TripletsDataset(KITTI360BaseDataset):
             amp_ctx = torch.autocast(device_type='cuda', dtype=torch.float16)
         else:
             amp_ctx = contextlib.nullcontext()
+
+        def _run_and_gather(dataloader, mode, m):
+            """Run inference on this rank's shard, then all_gather (idx, feat)
+            pairs and fill the full cache on every rank."""
+            local_idx_chunks, local_feat_chunks = [], []
+            for data_dict, indexes in tqdm(dataloader, disable=(rank != 0)):
+                for _k, _v in data_dict.items():
+                    if isinstance(_v, torch.Tensor):
+                        data_dict[_k] = _v.to(args.device)
+                features = m(data_dict, mode=mode)['embedding'].float()
+                local_idx_chunks.append(indexes.cpu())
+                local_feat_chunks.append(features.cpu())
+
+            if len(local_idx_chunks) > 0:
+                local_idx_np = torch.cat(local_idx_chunks, dim=0).numpy()
+                local_feat_np = torch.cat(local_feat_chunks, dim=0).numpy()
+            else:
+                local_idx_np = np.zeros(0, dtype=np.int64)
+                local_feat_np = np.zeros((0, cache_shape[1]), dtype=np.float32)
+
+            if ddp_on:
+                gathered = [None] * world
+                dist.all_gather_object(gathered, (local_idx_np, local_feat_np))
+                for idxs_np, feats_np in gathered:
+                    if len(idxs_np) > 0:
+                        cache[idxs_np] = feats_np
+            else:
+                if len(local_idx_np) > 0:
+                    cache[local_idx_np] = local_feat_np
+
         with torch.no_grad(), amp_ctx:
-            # db
-            for data_dict, indexes in tqdm(subset_dl_db):
-                data_dict = {k: v.to(args.device) for k, v in data_dict.items()}
-                features = model(data_dict, mode='db')
-                cache[indexes.numpy()] = features['embedding'].float().cpu().numpy()
-            # q
-            for data_dict, indexes in tqdm(subset_dl_q):
-                data_dict = {k: v.to(args.device) for k, v in data_dict.items()}
-                features = modelq(data_dict, mode='q')
-                cache[indexes.numpy()] = features['embedding'].float().cpu().numpy()
+            _run_and_gather(subset_dl_db, 'db', model)
+            _run_and_gather(subset_dl_q, 'q', modelq)
+
         return cache
     
 
@@ -1341,44 +1383,66 @@ class KITTI360TripletsDataset(KITTI360BaseDataset):
     # =================== partial_sep 
 
     def compute_triplets_partial_sep(self, args, model, modelq):
+        import torch.distributed as dist
+        ddp_on = dist.is_available() and dist.is_initialized()
+        rank = dist.get_rank() if ddp_on else 0
+
         self.triplets_global_indexes = []
-        # Take 1000 random queries
-        if self.mining in ["partial", 'partial_sep']:
-            sampled_queries_indexes = np.random.choice(self.queries_num, args.cache_refresh_rate, replace=False) 
-        elif self.mining == "msls_weighted":  # Pick night and sideways queries with higher probability
-            sampled_queries_indexes = np.random.choice(self.queries_num, args.cache_refresh_rate, replace=False, p=self.weights)
-        
-        # Sample 1000 random database images for the negatives
-        sampled_database_indexes = np.random.choice(self.database_num, self.neg_samples_num, replace=False) # why need this step?
-        # Take all the positives
-        positives_indexes = [self.hard_positives_per_query[i] for i in sampled_queries_indexes] # [array, array, ...]
-        positives_indexes = [p for pos in positives_indexes for p in pos] # [int, int, ...]
-        # Merge them into database_indexes and remove duplicates
+
+        # Rank 0 draws the random samples; all ranks must agree on the
+        # same sampled indices so their cache shards line up. Broadcast
+        # over NCCL via int64 cuda tensors.
+        if rank == 0:
+            if self.mining in ["partial", 'partial_sep']:
+                sampled_queries_indexes = np.random.choice(self.queries_num, args.cache_refresh_rate, replace=False)
+            elif self.mining == "msls_weighted":
+                sampled_queries_indexes = np.random.choice(self.queries_num, args.cache_refresh_rate, replace=False, p=self.weights)
+            sampled_database_indexes = np.random.choice(self.database_num, self.neg_samples_num, replace=False)
+            sampled_queries_indexes = sampled_queries_indexes.astype(np.int64)
+            sampled_database_indexes = sampled_database_indexes.astype(np.int64)
+        else:
+            sampled_queries_indexes = np.zeros(args.cache_refresh_rate, dtype=np.int64)
+            sampled_database_indexes = np.zeros(self.neg_samples_num, dtype=np.int64)
+
+        if ddp_on:
+            device = args.device
+            sq_t = torch.from_numpy(sampled_queries_indexes).to(device)
+            sd_t = torch.from_numpy(sampled_database_indexes).to(device)
+            dist.broadcast(sq_t, src=0)
+            dist.broadcast(sd_t, src=0)
+            sampled_queries_indexes = sq_t.cpu().numpy()
+            sampled_database_indexes = sd_t.cpu().numpy()
+
+        positives_indexes = [self.hard_positives_per_query[i] for i in sampled_queries_indexes]
+        positives_indexes = [p for pos in positives_indexes for p in pos]
         database_indexes = list(sampled_database_indexes) + positives_indexes
         database_indexes = list(np.unique(database_indexes))
-        
-        # self is inference True length = 23949
-        subset_ds = Subset(self, database_indexes + list(sampled_queries_indexes + self.database_num))
-        # [partial dataset + partial query] cache
-        # query_index = query_index + self.database_num
+
+        subset_ds = Subset(self, list(database_indexes) + list(sampled_queries_indexes + self.database_num))
         cache_length = len(self)
-        # cache = self.compute_cache(args, model, subset_ds, cache_shape=(cache_length, args.features_dim)) 
-        cache = self.compute_cache_sep(args, model, subset_ds, cache_shape=(cache_length, args.features_dim), modelq=modelq) 
-        
-        # This loop's iterations could be done individually in the __getitem__(). This way is slower but clearer (and yields same results)
-        for query_index in tqdm(sampled_queries_indexes): # max-12830  min-16
-            query_features = self.get_query_features(query_index, cache) # query_features = cache[query_index + self.database_num]
-            best_positive_index = self.get_best_positive_index(args, query_index, cache, query_features)
-            
-            # Choose the hardest negatives within sampled_database_indexes, ensuring that there are no positives
-            soft_positives = self.soft_positives_per_query[query_index]
-            neg_indexes = np.setdiff1d(sampled_database_indexes, soft_positives, assume_unique=True)
-            
-            # Take all database images that are negatives and are within the sampled database images (aka database_indexes)
-            neg_indexes = self.get_hardest_negatives_indexes(args, cache, query_features, neg_indexes)
-            self.triplets_global_indexes.append((query_index, best_positive_index, *neg_indexes))
-        # self.triplets_global_indexes is a tensor of shape [1000, 12]
-        self.triplets_global_indexes = torch.tensor(self.triplets_global_indexes)
+        # Every rank runs its shard of the inference loop inside
+        # compute_cache_sep and all_gathers features, so after this call
+        # every rank holds the full cache.
+        cache = self.compute_cache_sep(args, model, subset_ds, cache_shape=(cache_length, args.features_dim), modelq=modelq)
+
+        if rank == 0:
+            # CPU-bound mining: KNN-style index search over the cache.
+            # Small enough (~10k × 512) that keeping it on rank 0 and
+            # broadcasting the result is simpler and roughly as fast as
+            # sharding. broadcast_triplets (called right after this) sends
+            # the tensor to the other ranks.
+            for query_index in tqdm(sampled_queries_indexes):
+                query_features = self.get_query_features(query_index, cache)
+                best_positive_index = self.get_best_positive_index(args, query_index, cache, query_features)
+                soft_positives = self.soft_positives_per_query[query_index]
+                neg_indexes = np.setdiff1d(sampled_database_indexes, soft_positives, assume_unique=True)
+                neg_indexes = self.get_hardest_negatives_indexes(args, cache, query_features, neg_indexes)
+                self.triplets_global_indexes.append((query_index, best_positive_index, *neg_indexes))
+            self.triplets_global_indexes = torch.tensor(self.triplets_global_indexes)
+        else:
+            # Placeholder; broadcast_triplets will overwrite with the
+            # real tensor coming from rank 0.
+            self.triplets_global_indexes = torch.zeros((0, 0), dtype=torch.long)
 
 
 

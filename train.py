@@ -420,13 +420,15 @@ def main():
                 logging.debug(f"Cache: {loop_num} / {loops_num}")
 
             # ============ Compute triplets ============
-            # Rank 0 computes triplets (inference), then broadcasts indices to all ranks.
+            # All ranks participate in cache computation (data-parallel shard).
+            # Rank 0 runs the CPU-bound mining loop, then broadcasts triplet
+            # indices to the other ranks.
             if use_ddp:
+                triplets_ds.is_inference = True
                 if is_main_process():
-                    triplets_ds.is_inference = True
                     logging.info('compute triplets')
-                    triplets_ds.compute_triplets(args, model_without_ddp, modelq_without_ddp)
-                    triplets_ds.is_inference = False
+                triplets_ds.compute_triplets(args, model_without_ddp, modelq_without_ddp)
+                triplets_ds.is_inference = False
                 dist.barrier()
                 broadcast_triplets(triplets_ds, args.device)
             else:
