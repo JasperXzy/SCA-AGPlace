@@ -36,7 +36,7 @@ except Exception:  # pragma: no cover - older Lightning versions
 
 
 LIGHTNING_COMMANDS = {"fit", "train", "validate", "test", "predict"}
-RESERVED_CONFIG_KEYS = {"trainer", "model", "data", "ckpt_path"}
+RESERVED_CONFIG_KEYS = {"trainer", "model", "data", "logging", "ckpt_path"}
 STORE_TRUE_FLAGS = {"horizontal_flip", "efficient_ram_testing"}
 
 
@@ -162,6 +162,10 @@ def _split_cli(argv: Iterable[str]) -> Tuple[str, List[str], Dict[str, Any], str
             key = token[len("--data.") :].split("=", 1)[0]
             value, i = _consume_value(argv, i)
             _set_nested(inline_config, f"data.{key}", value)
+        elif token.startswith("--logging."):
+            key = token[len("--logging.") :].split("=", 1)[0]
+            value, i = _consume_value(argv, i)
+            _set_nested(inline_config, f"logging.{key}", value)
         else:
             legacy_args.append(token)
             i += 1
@@ -212,9 +216,10 @@ def _parse_legacy_args(legacy_argv: List[str]) -> argparse.Namespace:
     sys.argv = [old_argv[0], *legacy_argv]
     from tools import options as parser
 
-    args = parser.parse_arguments()
-    # Keep sys.argv in the legacy-compatible form for code that still reads argv.
-    return args
+    try:
+        return parser.parse_arguments()
+    finally:
+        sys.argv = old_argv
 
 
 def _import_symbol(target: str):
@@ -259,6 +264,99 @@ def _default_precision(args: argparse.Namespace) -> str:
     return "32-true"
 
 
+def _get_litlogger_class():
+    for module_name in ("lightning.pytorch.loggers", "pytorch_lightning.loggers"):
+        try:
+            module = importlib.import_module(module_name)
+            litlogger_cls = getattr(module, "LitLogger", None)
+            if litlogger_cls is not None:
+                return litlogger_cls
+        except Exception:
+            continue
+    return None
+
+
+def _metadata_to_strings(metadata: Any) -> Dict[str, str]:
+    if not isinstance(metadata, dict):
+        return {}
+    return {str(key): str(value) for key, value in metadata.items()}
+
+
+def _logger_names(logger_config: Any) -> str:
+    if isinstance(logger_config, (list, tuple)):
+        return ", ".join(type(logger).__name__ for logger in logger_config)
+    return type(logger_config).__name__
+
+
+def _iter_loggers(logger_config: Any):
+    if logger_config in (None, False):
+        return []
+    if isinstance(logger_config, (list, tuple)):
+        return logger_config
+    return [logger_config]
+
+
+def _litlogger_save_logs_enabled(logging_config: Dict[str, Any]) -> bool:
+    lit_config = logging_config.get("litlogger", {}) or {}
+    return bool(lit_config.get("enabled", False) and lit_config.get("save_logs", True))
+
+
+def _initialise_litlogger_capture(logger_config: Any, logging_config: Dict[str, Any]):
+    if (
+        not _is_rank_zero()
+        or not _litlogger_save_logs_enabled(logging_config)
+        or os.environ.get("_IN_PTY_RECORDER") == "1"
+    ):
+        return
+
+    for logger in _iter_loggers(logger_config):
+        if type(logger).__name__ == "LitLogger":
+            # LitLogger(save_logs=True) re-runs the current command under a PTY
+            # recorder on first experiment access. Trigger it before model/data
+            # construction so the parent process exits before expensive work.
+            _ = logger.experiment
+            return
+
+
+def _build_loggers(args: argparse.Namespace, logging_config: Dict[str, Any]):
+    csv_config = logging_config.get("csv", {}) or {}
+    lit_config = logging_config.get("litlogger", {}) or {}
+    loggers = []
+
+    if csv_config.get("enabled", True):
+        loggers.append(
+            pl.loggers.CSVLogger(
+                save_dir=csv_config.get("save_dir") or args.save_dir,
+                name=csv_config.get("name") or "lightning_logs",
+            )
+        )
+
+    if lit_config.get("enabled", False):
+        LitLogger = _get_litlogger_class()
+        if LitLogger is None or importlib.util.find_spec("litlogger") is None:
+            raise ImportError(
+                "LitLogger was enabled, but it is not available. "
+                "Install it with `pip install litlogger` or `pip install lightning[extra]`."
+            )
+
+        lit_kwargs = {
+            "root_dir": lit_config.get("root_dir") or args.save_dir,
+            "name": lit_config.get("name") or args.exp_name,
+            "teamspace": lit_config.get("teamspace"),
+            "metadata": _metadata_to_strings(lit_config.get("metadata", {})),
+            "store_step": lit_config.get("store_step", True),
+            "log_model": lit_config.get("log_model", False),
+            "save_logs": lit_config.get("save_logs", True),
+            "checkpoint_name": lit_config.get("checkpoint_name"),
+        }
+        lit_kwargs = {key: value for key, value in lit_kwargs.items() if value is not None}
+        loggers.append(LitLogger(**lit_kwargs))
+
+    if not loggers:
+        return False
+    return loggers[0] if len(loggers) == 1 else loggers
+
+
 class SCALightningCLI(_BaseLightningCLI):
     """Small Lightning entrypoint that preserves the repo's legacy argparse contract.
 
@@ -276,11 +374,14 @@ class SCALightningCLI(_BaseLightningCLI):
             _deep_update(config, _load_yaml(path))
         _deep_update(config, inline_config)
         ckpt_path = ckpt_path if ckpt_path is not None else config.get("ckpt_path")
+        logging_config = copy.deepcopy(config.get("logging", {}))
 
         legacy_argv = [*_config_to_legacy_argv(config), *legacy_cli_args]
         args = _parse_legacy_args(legacy_argv)
         if getattr(args, "save_dir", "default") == "default":
             args.save_dir = os.path.join("logs", args.exp_name)
+        logger_config = _build_loggers(args, logging_config)
+        _initialise_litlogger_capture(logger_config, logging_config)
         loops_num = math.ceil(args.queries_per_epoch / args.cache_refresh_rate)
         if torch.cuda.is_available():
             torch.set_float32_matmul_precision("high")
@@ -322,7 +423,9 @@ class SCALightningCLI(_BaseLightningCLI):
         )
         callbacks.append(TripletCacheRefreshCallback(loops_num=loops_num))
         if trainer_config.get("enable_progress_bar", True) and not has_progress_bar:
-            callbacks.append(pl.callbacks.RichProgressBar(leave=True, console_kwargs={"stderr": True}))
+            callbacks.append(
+                pl.callbacks.RichProgressBar(leave=True, console_kwargs={"stderr": True})
+            )
         callbacks.extend(
             [
                 RetrievalEvalCallback(loops_num=loops_num),
@@ -330,10 +433,7 @@ class SCALightningCLI(_BaseLightningCLI):
             ]
         )
         trainer_config["callbacks"] = callbacks
-        trainer_config.setdefault(
-            "logger",
-            pl.loggers.CSVLogger(save_dir=args.save_dir, name="lightning_logs"),
-        )
+        trainer_config.setdefault("logger", logger_config)
 
         model = model_cls(args)
         datamodule = datamodule_cls(args)
@@ -347,7 +447,7 @@ class SCALightningCLI(_BaseLightningCLI):
         logging.info("Arguments: %s", args)
         logging.info("Lightning trainer config: %s", trainer_log_config)
         logging.info("Lightning callbacks: %s", callback_names)
-        logging.info("Lightning logger: %s", type(trainer_config["logger"]).__name__)
+        logging.info("Lightning logger: %s", _logger_names(trainer_config["logger"]))
         logging.info("Cache loops per original epoch: %d", loops_num)
 
         if command not in {"fit", "train"}:
