@@ -71,6 +71,18 @@ def _progress(iterable, args=None, desc=None, disable=False):
     )
 
 
+def _cache_num_workers(args):
+    return int(getattr(args, "cache_num_workers", getattr(args, "num_workers", 0)))
+
+
+def _worker_kwargs(args, num_workers):
+    kwargs = {"num_workers": num_workers}
+    context = getattr(args, "worker_multiprocessing_context", None)
+    if num_workers > 0 and context not in (None, "", "default"):
+        kwargs["multiprocessing_context"] = context
+    return kwargs
+
+
 def estimate_normals_o3d(pts, k=30):
     """Per-point normal estimation via Open3D, matching the Utonia paper:
         "Surface normals are estimated with Open3D, including directions
@@ -1082,9 +1094,11 @@ class KITTI360TripletsDataset(KITTI360BaseDataset):
     def compute_cache(args, model, subset_ds, cache_shape):
         """Compute the cache containing features of images, which is used to
         find best positive and hardest negatives."""
-        subset_dl = DataLoader(dataset=subset_ds, num_workers=args.num_workers,
+        cache_workers = _cache_num_workers(args)
+        subset_dl = DataLoader(dataset=subset_ds,
                                batch_size=args.infer_batch_size, shuffle=False,
-                               pin_memory=(args.device == "cuda"))
+                               pin_memory=(args.device == "cuda"),
+                               **_worker_kwargs(args, cache_workers))
         model = model.eval()
         
         # RAMEfficient2DMatrix can be replaced by np.zeros, but using
@@ -1141,16 +1155,19 @@ class KITTI360TripletsDataset(KITTI360BaseDataset):
             db_sampler = None
             q_sampler = None
 
-        subset_dl_db = DataLoader(dataset=subset_ds_db, num_workers=args.num_workers,
+        cache_workers = _cache_num_workers(args)
+        subset_dl_db = DataLoader(dataset=subset_ds_db,
                                  batch_size=args.infer_batch_size,
                                  sampler=db_sampler, shuffle=False,
                                  pin_memory=(args.device == "cuda"),
-                                 collate_fn=kitti360_collate_fn_cache_db)
-        subset_dl_q = DataLoader(dataset=subset_ds_q, num_workers=args.num_workers,
+                                 collate_fn=kitti360_collate_fn_cache_db,
+                                 **_worker_kwargs(args, cache_workers))
+        subset_dl_q = DataLoader(dataset=subset_ds_q,
                                 batch_size=args.infer_batch_size,
                                 sampler=q_sampler, shuffle=False,
                                 pin_memory=(args.device == "cuda"),
-                                collate_fn=kitti360_collate_fn_cache_q)
+                                collate_fn=kitti360_collate_fn_cache_q,
+                                **_worker_kwargs(args, cache_workers))
 
         cache = RAMEfficient2DMatrix(cache_shape, dtype=np.float32)  # [db+q, c]
 

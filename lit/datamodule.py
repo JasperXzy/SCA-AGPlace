@@ -20,6 +20,14 @@ from datasets.datasets_ws_nuscenes import (
 )
 
 
+def _worker_kwargs(cfg, num_workers):
+    kwargs = {"num_workers": num_workers}
+    context = getattr(cfg, "worker_multiprocessing_context", None)
+    if num_workers > 0 and context not in (None, "", "default"):
+        kwargs["multiprocessing_context"] = context
+    return kwargs
+
+
 class _ValidationSignalDataset(Dataset):
     def __len__(self):
         return 1
@@ -81,10 +89,10 @@ class SCADataModule(pl.LightningDataModule):
         return DataLoader(
             self.triplets_ds,
             batch_size=self.cfg.train_batch_size,
-            num_workers=self.cfg.num_workers,
             collate_fn=self.collate_fn,
             pin_memory=str(self.cfg.device).startswith("cuda"),
             drop_last=True,
+            **_worker_kwargs(self.cfg, self.cfg.num_workers),
         )
 
     def val_dataloader(self):

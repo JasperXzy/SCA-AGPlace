@@ -66,6 +66,18 @@ def _progress(iterable, args=None, desc=None, disable=False):
     )
 
 
+def _cache_num_workers(args):
+    return int(getattr(args, "cache_num_workers", getattr(args, "num_workers", 0)))
+
+
+def _worker_kwargs(args, num_workers):
+    kwargs = {"num_workers": num_workers}
+    context = getattr(args, "worker_multiprocessing_context", None)
+    if num_workers > 0 and context not in (None, "", "default"):
+        kwargs["multiprocessing_context"] = context
+    return kwargs
+
+
 
 
 
@@ -1183,9 +1195,11 @@ class NuScenesTripletsDataset(NuScenesBaseDataset):
     def compute_cache(args, model, subset_ds, cache_shape):
         """Compute the cache containing features of images, which is used to
         find best positive and hardest negatives."""
-        subset_dl = DataLoader(dataset=subset_ds, num_workers=args.num_workers,
+        cache_workers = _cache_num_workers(args)
+        subset_dl = DataLoader(dataset=subset_ds,
                                batch_size=args.infer_batch_size, shuffle=False,
-                               pin_memory=(args.device == "cuda"))
+                               pin_memory=(args.device == "cuda"),
+                               **_worker_kwargs(args, cache_workers))
         model = model.eval()
         
         # RAMEfficient2DMatrix can be replaced by np.zeros, but using
@@ -1222,15 +1236,18 @@ class NuScenesTripletsDataset(NuScenesBaseDataset):
 
         subset_ds_db = Subset(parent_ds, db_indices)
         subset_ds_q = Subset(parent_ds, q_indices)
-        subset_dl_db = DataLoader(dataset=subset_ds_db, num_workers=args.num_workers,
+        cache_workers = _cache_num_workers(args)
+        subset_dl_db = DataLoader(dataset=subset_ds_db,
                                  batch_size=args.infer_batch_size, shuffle=False,
                                  pin_memory=(args.device == "cuda"),
-                                 collate_fn=nuscenes_collate_fn_cache_db
+                                 collate_fn=nuscenes_collate_fn_cache_db,
+                                 **_worker_kwargs(args, cache_workers)
                                  )
-        subset_dl_q = DataLoader(dataset=subset_ds_q, num_workers=args.num_workers,
+        subset_dl_q = DataLoader(dataset=subset_ds_q,
                                 batch_size=args.infer_batch_size, shuffle=False,
                                 pin_memory=(args.device == "cuda"),
-                                collate_fn=nuscenes_collate_fn_cache_q
+                                collate_fn=nuscenes_collate_fn_cache_q,
+                                **_worker_kwargs(args, cache_workers)
                                 )
         # RAMEfficient2DMatrix can be replaced by np.zeros, but using
         # RAMEfficient2DMatrix is RAM efficient for full database mining.

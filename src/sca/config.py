@@ -189,6 +189,9 @@ class DataCfg:
     cuda: str = "0"
     device: str = "cuda"
     num_workers: int = 8
+    cache_num_workers: int = 0
+    worker_multiprocessing_context: Optional[str] = "spawn"
+    omp_num_threads: int = 16
     machine: str = "5080"
     dataset: str = "kitti360"
     datasets_folder: str = ""
@@ -367,6 +370,7 @@ class Config:
     def apply_runtime_environment(self) -> None:
         if "RANK" not in os.environ:
             os.environ["CUDA_VISIBLE_DEVICES"] = str(self.cuda)
+        os.environ.setdefault("OMP_NUM_THREADS", str(self.omp_num_threads))
 
     def default_precision(self) -> str:
         if self.amp_dtype == "bf16":
