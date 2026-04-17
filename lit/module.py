@@ -1,8 +1,5 @@
 import logging
 import math
-import sys
-from importlib.util import module_from_spec, spec_from_file_location
-from pathlib import Path
 
 import torch
 
@@ -211,11 +208,8 @@ class SCAModule(pl.LightningModule):
             f"epoch = {self.best_r1r5r10ep[3]:d}"
         )
         if self.trainer.is_global_zero:
-            commons = _load_lightning_commons()
             logging.info(now)
             logging.info(best)
-            commons.logging_info(self.cfg, now)
-            commons.logging_info(self.cfg, best)
 
     def _clip_if_configured(self, optimizer):
         clip_val = getattr(self.trainer, "gradient_clip_val", None)
@@ -227,16 +221,3 @@ class SCAModule(pl.LightningModule):
             gradient_clip_val=clip_val,
             gradient_clip_algorithm=clip_algorithm,
         )
-
-
-def _load_lightning_commons():
-    module_name = "_sca_lightning_commons"
-    if module_name in sys.modules:
-        return sys.modules[module_name]
-
-    commons_path = Path(__file__).resolve().parents[1] / "commons.py"
-    spec = spec_from_file_location(module_name, commons_path)
-    module = module_from_spec(spec)
-    spec.loader.exec_module(module)
-    sys.modules[module_name] = module
-    return module

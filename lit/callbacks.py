@@ -1,15 +1,13 @@
 import logging
 import time
 from contextlib import contextmanager
-from importlib.util import module_from_spec, spec_from_file_location
-from pathlib import Path
-import sys
 
 try:
     import pytorch_lightning as pl
 except ImportError as exc:  # pragma: no cover - depends on environment
     raise ImportError("PyTorch Lightning is required for callbacks.") from exc
 
+from lit.logging_utils import get_rich_console
 from lit.triplet_cache import TripletCacheBuilder
 
 
@@ -40,8 +38,7 @@ class _TripletProgress:
                 TimeRemainingColumn,
             )
 
-            commons = _load_lightning_commons()
-            console = commons.get_rich_console()
+            console = get_rich_console()
             if console is None or not console.is_terminal:
                 return self
 
@@ -184,20 +181,6 @@ class _TripletProgress:
                     state["total"],
                     elapsed,
                 )
-
-
-def _load_lightning_commons():
-    module_name = "_sca_lightning_commons"
-    if module_name in sys.modules:
-        return sys.modules[module_name]
-
-    commons_path = Path(__file__).resolve().parents[1] / "commons.py"
-    spec = spec_from_file_location(module_name, commons_path)
-    module = module_from_spec(spec)
-    spec.loader.exec_module(module)
-    sys.modules[module_name] = module
-    return module
-
 
 @contextmanager
 def _paused_lightning_progress(trainer, resume=True):

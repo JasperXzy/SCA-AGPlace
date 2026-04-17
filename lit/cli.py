@@ -14,12 +14,11 @@ from sca.config import Config
 from lit.runtime import (
     build_loggers,
     build_trainer_kwargs,
-    finish_text_logging,
     import_symbol,
     initialise_litlogger_capture,
     log_startup,
     rank,
-    setup_text_logging,
+    setup_runtime_logging,
     suppress_noisy_runtime_warnings,
 )
 
@@ -42,11 +41,10 @@ class SCALightningCLI:
         if torch.cuda.is_available():
             torch.set_float32_matmul_precision("high")
         pl.seed_everything(cfg.seed + rank(), workers=True)
-        setup_text_logging(cfg)
+        setup_runtime_logging(cfg)
 
         model = import_symbol(model_class)(cfg)
         datamodule = import_symbol(datamodule_class)(cfg)
         trainer = pl.Trainer(**trainer_config)
         log_startup(cfg, trainer_config, loops_num)
         trainer.fit(model, datamodule=datamodule, ckpt_path=cfg.ckpt_path)
-        finish_text_logging(cfg)

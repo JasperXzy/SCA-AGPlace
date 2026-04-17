@@ -5,8 +5,6 @@ import importlib.util
 import logging
 import os
 from datetime import timedelta
-from pathlib import Path
-import sys
 from typing import Any, Dict
 import warnings
 
@@ -25,6 +23,7 @@ except Exception:  # pragma: no cover - older Lightning versions
     DDPStrategy = None
 
 from sca.config import Config
+from lit.logging_utils import setup_logging
 
 
 def suppress_noisy_runtime_warnings() -> None:
@@ -156,19 +155,12 @@ def build_trainer_kwargs(cfg: Config, loops_num: int, logger_config: Any) -> Dic
     return trainer_config
 
 
-def setup_text_logging(cfg: Config) -> None:
+def setup_runtime_logging(cfg: Config) -> None:
     if not is_rank_zero():
         logging.basicConfig(level=logging.WARNING)
         return
-    commons = _load_lightning_commons()
-    commons.setup_logging(cfg.save_dir)
+    setup_logging(cfg.save_dir)
     logging.getLogger("PIL").setLevel(logging.WARNING)
-    commons.logging_init(cfg)
-
-
-def finish_text_logging(cfg: Config) -> None:
-    if is_rank_zero():
-        _load_lightning_commons().logging_end(cfg)
 
 
 def log_startup(cfg: Config, trainer_config: Dict[str, Any], loops_num: int) -> None:
@@ -244,16 +236,3 @@ def _checkpoint_callback():
         filename="epoch{epoch:03d}-r1{val/R@1:.2f}-rsum{val/R_sum:.2f}",
         auto_insert_metric_name=False,
     )
-
-
-def _load_lightning_commons():
-    module_name = "_sca_lightning_commons"
-    if module_name in sys.modules:
-        return sys.modules[module_name]
-
-    commons_path = Path(__file__).resolve().parents[1] / "commons.py"
-    spec = importlib.util.spec_from_file_location(module_name, commons_path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    sys.modules[module_name] = module
-    return module

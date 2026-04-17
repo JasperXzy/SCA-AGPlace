@@ -1,14 +1,8 @@
 import logging
 import os
-import random
-import shutil
 import sys
-import time
 import traceback
 from os.path import join
-
-import numpy as np
-import torch
 
 
 _RICH_CONSOLE = None
@@ -27,18 +21,12 @@ def get_rich_console():
     return None if _RICH_CONSOLE is False else _RICH_CONSOLE
 
 
-def make_deterministic(seed=0):
-    if seed == -1:
-        return
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-
-
-def setup_logging(save_dir, console="info", info_filename="info.log", debug_filename="debug.log"):
+def setup_logging(
+    save_dir,
+    console="info",
+    info_filename="info.log",
+    debug_filename="debug.log",
+):
     os.makedirs(save_dir, exist_ok=True)
     formatter = logging.Formatter("%(asctime)s   %(message)s", "%Y-%m-%d %H:%M:%S")
     logger = logging.getLogger("")
@@ -47,7 +35,7 @@ def setup_logging(save_dir, console="info", info_filename="info.log", debug_file
     for handler in list(logger.handlers):
         logger.removeHandler(handler)
 
-    for noisy_logger in (
+    for logger_name in (
         "faiss",
         "faiss.loader",
         "fsspec",
@@ -61,7 +49,7 @@ def setup_logging(save_dir, console="info", info_filename="info.log", debug_file
         "pytorch_lightning.trainer.connectors.data_connector",
         "pytorch_lightning.trainer.connectors.logger_connector.logger_connector",
     ):
-        logging.getLogger(noisy_logger).setLevel(logging.ERROR)
+        logging.getLogger(logger_name).setLevel(logging.ERROR)
 
     if info_filename is not None:
         info_handler = logging.FileHandler(join(save_dir, info_filename))
@@ -100,34 +88,3 @@ def setup_logging(save_dir, console="info", info_filename="info.log", debug_file
         logger.info("\n" + "".join(traceback.format_exception(type_, value, tb)))
 
     sys.excepthook = exception_handler
-
-
-def get_datetime():
-    return time.strftime("%Y%m%d_%H%M")
-
-
-def logging_init(args):
-    os.makedirs("results", exist_ok=True)
-    for path in (join("results", f"{args.exp_name}.txt"), "results.txt"):
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(get_datetime())
-            f.write("\n")
-            f.write(f"{args.exp_name}\n")
-
-
-def logging_info(args, message):
-    os.makedirs("results", exist_ok=True)
-    for path in (join("results", f"{args.exp_name}.txt"), "results.txt"):
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(message + "\n")
-
-
-def logging_end(args):
-    for path in (join("results", f"{args.exp_name}.txt"), "results.txt"):
-        with open(path, "a", encoding="utf-8") as f:
-            f.write("\n")
-            f.write(get_datetime())
-
-
-def copy_best_model(src, dst):
-    shutil.copyfile(src, dst)
