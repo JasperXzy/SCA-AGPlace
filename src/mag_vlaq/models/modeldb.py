@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
 from typing import List
-from mag_vlaq.models.backbones.image_fe import ImageFE
-from mag_vlaq.models.backbones.image_pooling import GeM
+from mag_vlaq.models.backbones.modeldb_image_fe import ImageFE
+from mag_vlaq.models.backbones.modeldb_image_pooling import GeM
 import torch.nn.functional as F
 
 
@@ -20,11 +20,11 @@ class MLP(nn.Module):
         return output
 
 
-class DBVanilla2D(nn.Module):
+class ModelDB(nn.Module):
     def __init__(self, mode:List[str], dim, args=None):
         super().__init__()
         if args is None:
-            raise ValueError("DBVanilla2D requires explicit args; parse CLI/config in the entrypoint.")
+            raise ValueError("ModelDB requires explicit args; parse CLI/config in the entrypoint.")
         self.args = args
         # ---- database
         if mode == 'db':

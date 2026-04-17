@@ -4,8 +4,8 @@ from typing import Iterable, List, Tuple
 import torch
 import torch.nn as nn
 
-from mag_vlaq.models.dbvanilla2d import DBVanilla2D
-from mag_vlaq.models.mm import MM
+from mag_vlaq.models.modeldb import ModelDB
+from mag_vlaq.models.modelq import ModelQ
 
 
 def _trainable(parameters: Iterable[torch.nn.Parameter]) -> List[torch.nn.Parameter]:
@@ -20,7 +20,7 @@ def _add_group(groups: List[dict], params: Iterable[torch.nn.Parameter], lr: flo
 
 def build_param_groups(model: nn.Module, modelq: nn.Module, cfg) -> Tuple[List[dict], List[dict]]:
     params_db: List[dict] = []
-    if isinstance(model, DBVanilla2D):
+    if isinstance(model, ModelDB):
         if getattr(cfg, "lrdino", 0.0) > 0.0:
             dino_params = list(model.dbimage_fes.parameters())
             base_params = [
@@ -33,7 +33,7 @@ def build_param_groups(model: nn.Module, modelq: nn.Module, cfg) -> Tuple[List[d
             _add_group(params_db, _trainable(model.parameters()), cfg.lrdb)
 
     params_q: List[dict] = []
-    if isinstance(modelq, MM):
+    if isinstance(modelq, ModelQ):
         if getattr(cfg, "lrdino", 0.0) > 0.0:
             _add_group(params_q, _trainable(modelq.image_fe.parameters()), cfg.lrdino)
         else:

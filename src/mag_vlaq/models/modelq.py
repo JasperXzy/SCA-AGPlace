@@ -2,12 +2,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from mag_vlaq.models.backbones.mm_image_fe import ImageFE
-from mag_vlaq.models.backbones.mm_image_pooling import GeM
+from mag_vlaq.models.backbones.modelq_image_fe import ImageFE
+from mag_vlaq.models.backbones.modelq_image_pooling import GeM
 from mag_vlaq.models.blocks.fuse_block_toshallow import FuseBlockToShallow
 from mag_vlaq.models.blocks.stage2fuse_blockadd import Stage2FuseBlockAdd
 
-from mag_vlaq.models.backbones.utonia_fe import UtoniaFE
+from mag_vlaq.models.backbones.modelq_utonia_fe import UtoniaFE
 from mag_vlaq.models.layers.pooling import MinkGeM
 
 class MLP(nn.Module):
@@ -22,11 +22,11 @@ class MLP(nn.Module):
     def forward(self, x):
         return self.seq(x)
 
-class MM(nn.Module):
+class ModelQ(nn.Module):
     def __init__(self, drop=None, args=None):
         super().__init__()
         if args is None:
-            raise ValueError("MM requires explicit args; parse CLI/config in the entrypoint.")
+            raise ValueError("ModelQ requires explicit args; parse CLI/config in the entrypoint.")
         self.args = args
         self.drop = drop
         # ---- query
