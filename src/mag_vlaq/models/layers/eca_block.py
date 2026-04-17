@@ -2,13 +2,12 @@
 # Pure PyTorch version (no MinkowskiEngine dependency)
 
 import numpy as np
-import torch
-import torch.nn as nn
+from torch import nn
 
 from mag_vlaq.models.layers.sparse_utils import (
     SimpleSparse,
-    sparse_global_avg_pool,
     sparse_broadcast_mul,
+    sparse_global_avg_pool,
 )
 
 
@@ -42,6 +41,7 @@ class ECABasicBlock(nn.Module):
     Uses nn.Linear (pointwise transform) instead of spatial sparse convolutions,
     since this block is used for per-point feature refinement (same in/out dims).
     """
+
     def __init__(self, inplanes, planes, stride=1, dilation=1, downsample=None, dimension=3):
         super().__init__()
         self.conv1 = nn.Linear(inplanes, planes)

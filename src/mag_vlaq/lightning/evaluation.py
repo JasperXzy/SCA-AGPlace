@@ -18,7 +18,7 @@ def assign_features(all_features, indices, features, test_ds, test_method):
     if test_method in {"nearest_crop", "maj_voting"}:
         for row, index in enumerate(indices.tolist()):
             start = test_ds.database_num + (index - test_ds.database_num) * 5
-            all_features[start:start + 5, :] = features[row * 5:(row + 1) * 5, :]
+            all_features[start : start + 5, :] = features[row * 5 : (row + 1) * 5, :]
         return
 
     all_features[indices, :] = features
@@ -59,13 +59,11 @@ def compute_recall(cfg, queries_features, database_features, test_ds, test_metho
     recalls = np.zeros(len(cfg.recall_values))
     for query_index, pred in enumerate(predictions):
         for i, n in enumerate(cfg.recall_values):
-            if np.any(np.in1d(pred[:n], positives_per_query[query_index])):
+            if np.any(np.isin(pred[:n], positives_per_query[query_index])):
                 recalls[i:] += 1
                 break
     recalls = recalls / test_ds.queries_num * 100
-    recalls_str = ", ".join(
-        f"R@{val}: {rec:.1f}" for val, rec in zip(cfg.recall_values, recalls)
-    )
+    recalls_str = ", ".join(f"R@{val}: {rec:.1f}" for val, rec in zip(cfg.recall_values, recalls, strict=False))
     return recalls, recalls_str
 
 
@@ -83,6 +81,6 @@ def top_n_voting(topn, predictions, distances, maj_weight):
         raise ValueError(topn)
 
     vals, counts = np.unique(predictions[:, selected], return_counts=True)
-    for val, count in zip(vals[counts > 1], counts[counts > 1]):
+    for val, count in zip(vals[counts > 1], counts[counts > 1], strict=False):
         mask = predictions[:, selected] == val
         distances[:, selected][mask] -= maj_weight * count / n

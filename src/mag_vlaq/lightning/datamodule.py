@@ -11,16 +11,16 @@ except ImportError as exc:  # pragma: no cover - depends on environment
 from mag_vlaq.data.kitti360 import (
     KITTI360BaseDataset,
     KITTI360TripletsDataset,
+    kitti360_collate_fn,
     kitti360_collate_fn_cache_db,
     kitti360_collate_fn_cache_q,
-    kitti360_collate_fn,
 )
 from mag_vlaq.data.nuscenes import (
     NuScenesBaseDataset,
     NuScenesTripletsDataset,
+    nuscenes_collate_fn,
     nuscenes_collate_fn_cache_db,
     nuscenes_collate_fn_cache_q,
-    nuscenes_collate_fn,
 )
 
 
@@ -52,9 +52,7 @@ class MagVlaqDataModule(pl.LightningDataModule):
                 "train",
                 self.cfg.negs_num_per_query,
             )
-            self.test_ds = KITTI360BaseDataset(
-                self.cfg, self.cfg.datasets_folder, self.cfg.dataset_name, "test"
-            )
+            self.test_ds = KITTI360BaseDataset(self.cfg, self.cfg.datasets_folder, self.cfg.dataset_name, "test")
             self.collate_fn = kitti360_collate_fn
         elif self.cfg.dataset == "nuscenes":
             self.triplets_ds = NuScenesTripletsDataset(
@@ -64,9 +62,7 @@ class MagVlaqDataModule(pl.LightningDataModule):
                 "train",
                 self.cfg.negs_num_per_query,
             )
-            self.test_ds = NuScenesBaseDataset(
-                self.cfg, self.cfg.datasets_folder, self.cfg.dataset_name, "test"
-            )
+            self.test_ds = NuScenesBaseDataset(self.cfg, self.cfg.datasets_folder, self.cfg.dataset_name, "test")
             self.collate_fn = nuscenes_collate_fn
         else:
             raise ValueError(f"Unsupported dataset: {self.cfg.dataset}")
@@ -105,9 +101,7 @@ class MagVlaqDataModule(pl.LightningDataModule):
                 self.test_ds.database_num + self.test_ds.queries_num,
             ),
         )
-        query_batch_size = (
-            1 if self.cfg.test_method == "single_query" else self.cfg.infer_batch_size
-        )
+        query_batch_size = 1 if self.cfg.test_method == "single_query" else self.cfg.infer_batch_size
         loader_kwargs = {
             "num_workers": self.cfg.num_workers,
             "pin_memory": str(self.cfg.device).startswith("cuda"),

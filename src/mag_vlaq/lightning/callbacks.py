@@ -1,6 +1,6 @@
 import logging
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 
 try:
     import pytorch_lightning as pl
@@ -123,7 +123,7 @@ class _TripletProgress:
 
     @staticmethod
     def _format_duration(seconds):
-        seconds = max(0, int(round(seconds)))
+        seconds = max(0, round(seconds))
         minutes, seconds = divmod(seconds, 60)
         hours, minutes = divmod(minutes, 60)
         return f"{hours}:{minutes:02d}:{seconds:02d}"
@@ -182,18 +182,14 @@ class _TripletProgress:
                     elapsed,
                 )
 
+
 @contextmanager
 def _paused_lightning_progress(trainer, resume=True):
     progress_bar = getattr(trainer, "progress_bar_callback", None)
     stop = getattr(progress_bar, "_stop_progress", None)
     init = getattr(progress_bar, "_init_progress", None)
     progress = getattr(progress_bar, "progress", None)
-    if (
-        progress_bar is None
-        or progress is None
-        or stop is None
-        or getattr(progress_bar, "is_disabled", False)
-    ):
+    if progress_bar is None or progress is None or stop is None or getattr(progress_bar, "is_disabled", False):
         yield
         return
 
@@ -202,10 +198,8 @@ def _paused_lightning_progress(trainer, resume=True):
         yield
     finally:
         if init is not None and resume:
-            try:
+            with suppress(Exception):
                 init(trainer)
-            except Exception:
-                pass
 
 
 class TripletCacheRefreshCallback(pl.Callback):

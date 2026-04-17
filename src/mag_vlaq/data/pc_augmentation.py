@@ -1,28 +1,25 @@
 # Author: Jacek Komorowski
 # Warsaw University of Technology
 
-import numpy as np
 import math
-from scipy.linalg import expm, norm
 import random
+
+import numpy as np
 import torch
-
-import torchvision.transforms as TVT
-
-
+from scipy.linalg import expm, norm
 
 # class TrainTransform:
 #     def __init__(self, mode: ['train','test']):
 #         t = [
-#             JitterPoints(sigma=0.001, clip=0.002), 
+#             JitterPoints(sigma=0.001, clip=0.002),
 #             RemoveRandomPoints(r=(0.0, 0.1)),
-#             RandomTranslation(max_delta=0.01), 
+#             RandomTranslation(max_delta=0.01),
 #             RemoveRandomBlock(p=0.4),
 #             RandomRotation(max_theta=5, max_theta2=0, axis=np.array([0, 0, 1])),
 #             RandomFlip([0.25, 0.25, 0.]),
 #             ]
 #         t = [
-#             JitterPoints(sigma=0.001, clip=0.002), 
+#             JitterPoints(sigma=0.001, clip=0.002),
 #             RemoveRandomPoints(r=(0.0, 0.1)),
 #             RemoveRandomBlock(p=0.4)
 #             ]
@@ -32,7 +29,6 @@ import torchvision.transforms as TVT
 #         if self.transform is not None:
 #             e = self.transform(e)
 #         return e
-
 
 
 # class TrainSetTransform:
@@ -62,17 +58,11 @@ import torchvision.transforms as TVT
 #         return e
 
 
-
-
-
-
-
-
 class PCRandomFlip:
     def __init__(self, p):
         # p = [p_x, p_y, p_z] probability of flipping each axis
         assert len(p) == 3
-        assert 0 < sum(p) <= 1, 'sum(p) must be in (0, 1] range, is: {}'.format(sum(p))
+        assert 0 < sum(p) <= 1, f"sum(p) must be in (0, 1] range, is: {sum(p)}"
         self.p = p
         self.p_cum_sum = np.cumsum(p)
 
@@ -94,8 +84,8 @@ class PCRandomFlip:
 class PCRandomRotation:
     def __init__(self, axis=None, max_theta=180, max_theta2=15):
         self.axis = axis
-        self.max_theta = max_theta      # Rotation around axis
-        self.max_theta2 = max_theta2    # Smaller rotation in random direction
+        self.max_theta = max_theta  # Rotation around axis
+        self.max_theta2 = max_theta2  # Smaller rotation in random direction
 
     def _M(self, axis, theta):
         return expm(np.cross(np.eye(3), axis / norm(axis) * theta)).astype(np.float32)
@@ -144,29 +134,29 @@ class PCRandomShear:
 
 
 class PCJitterPoints:
-    def __init__(self, sigma=0.01, clip=None, p=1.):
-        assert 0 < p <= 1.
-        assert sigma > 0.
+    def __init__(self, sigma=0.01, clip=None, p=1.0):
+        assert 0 < p <= 1.0
+        assert sigma > 0.0
 
         self.sigma = sigma
         self.clip = clip
         self.p = p
 
     def __call__(self, e):
-        """ Randomly jitter points. jittering is per point.
-            Input:
-              BxNx3 array, original batch of point clouds
-            Return:
-              BxNx3 array, jittered batch of point clouds
+        """Randomly jitter points. jittering is per point.
+        Input:
+          BxNx3 array, original batch of point clouds
+        Return:
+          BxNx3 array, jittered batch of point clouds
         """
 
         sample_shape = (e.shape[0],)
-        if self.p < 1.:
+        if self.p < 1.0:
             # Create a mask for points to jitter
             m = torch.distributions.categorical.Categorical(probs=torch.tensor([1 - self.p, self.p]))
             mask = m.sample(sample_shape=sample_shape)
         else:
-            mask = torch.ones(sample_shape, dtype=torch.int64 )
+            mask = torch.ones(sample_shape, dtype=torch.int64)
 
         mask = mask == 1
         jitter = self.sigma * torch.randn_like(e[mask])
@@ -199,7 +189,7 @@ class PCRemoveRandomPoints:
             # Randomly select removal ratio
             r = random.uniform(self.r_min, self.r_max)
 
-        mask = np.random.choice(range(n), size=int(n*r), replace=False)   # select elements to remove
+        mask = np.random.choice(range(n), size=int(n * r), replace=False)  # select elements to remove
         e[mask] = torch.zeros_like(e[mask])
         return e
 
@@ -210,6 +200,7 @@ class PCRemoveRandomBlock:
     Erases fronto-parallel cuboid.
     Instead of erasing we set coords of removed points to (0, 0, 0) to retain the same number of points
     """
+
     def __init__(self, p=0.5, scale=(0.02, 0.33), ratio=(0.3, 3.3)):
         self.p = p
         self.scale = scale
@@ -235,9 +226,7 @@ class PCRemoveRandomBlock:
 
     def __call__(self, coords):
         if random.random() < self.p:
-            x, y, w, h = self.get_params(coords)     # Fronto-parallel cuboid to remove
-            mask = (x < coords[..., 0]) & (coords[..., 0] < x+w) & (y < coords[..., 1]) & (coords[..., 1] < y+h)
+            x, y, w, h = self.get_params(coords)  # Fronto-parallel cuboid to remove
+            mask = (x < coords[..., 0]) & (coords[..., 0] < x + w) & (y < coords[..., 1]) & (coords[..., 1] < y + h)
             coords[mask] = torch.zeros_like(coords[mask])
         return coords
-
-

@@ -3,12 +3,13 @@ from __future__ import annotations
 import copy
 import os
 import re
+from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import Any
 
 
-def _load_yaml(path: str) -> Dict[str, Any]:
+def _load_yaml(path: str) -> dict[str, Any]:
     try:
         import yaml
     except ImportError as exc:  # pragma: no cover - depends on environment
@@ -21,7 +22,7 @@ def _load_yaml(path: str) -> Dict[str, Any]:
         return yaml.safe_load(f) or {}
 
 
-def _deep_update(base: Dict[str, Any], override: Mapping[str, Any]) -> Dict[str, Any]:
+def _deep_update(base: dict[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
     for key, value in override.items():
         if isinstance(value, Mapping) and isinstance(base.get(key), dict):
             _deep_update(base[key], value)
@@ -30,7 +31,7 @@ def _deep_update(base: Dict[str, Any], override: Mapping[str, Any]) -> Dict[str,
     return base
 
 
-def _set_nested(config: Dict[str, Any], dotted_key: str, value: Any) -> None:
+def _set_nested(config: dict[str, Any], dotted_key: str, value: Any) -> None:
     current = config
     parts = dotted_key.split(".")
     for part in parts[:-1]:
@@ -85,7 +86,7 @@ def _coerce_value(current: Any, value: Any) -> Any:
     return copy.deepcopy(value)
 
 
-def _split_tokens(value: Any) -> List[str]:
+def _split_tokens(value: Any) -> list[str]:
     if value is None:
         return []
     if isinstance(value, str):
@@ -101,31 +102,27 @@ def _expand_user(value: Any) -> Any:
 
 @dataclass
 class TrainerCfg:
-    accelerator: Optional[str] = None
+    accelerator: str | None = None
     devices: Any = None
     strategy: Any = None
     precision: Any = None
-    reload_dataloaders_every_n_epochs: Optional[int] = None
-    accumulate_grad_batches: Optional[int] = None
-    log_every_n_steps: Optional[int] = None
-    num_sanity_val_steps: Optional[int] = None
-    enable_model_summary: Optional[bool] = None
-    check_val_every_n_epoch: Optional[int] = None
-    max_epochs: Optional[int] = None
-    default_root_dir: Optional[str] = None
-    sync_batchnorm: Optional[bool] = None
-    enable_progress_bar: Optional[bool] = None
-    gradient_clip_val: Optional[float] = None
-    gradient_clip_algorithm: Optional[str] = None
-    callbacks: List[Any] = field(default_factory=list)
-    extra: Dict[str, Any] = field(default_factory=dict)
+    reload_dataloaders_every_n_epochs: int | None = None
+    accumulate_grad_batches: int | None = None
+    log_every_n_steps: int | None = None
+    num_sanity_val_steps: int | None = None
+    enable_model_summary: bool | None = None
+    check_val_every_n_epoch: int | None = None
+    max_epochs: int | None = None
+    default_root_dir: str | None = None
+    sync_batchnorm: bool | None = None
+    enable_progress_bar: bool | None = None
+    gradient_clip_val: float | None = None
+    gradient_clip_algorithm: str | None = None
+    callbacks: list[Any] = field(default_factory=list)
+    extra: dict[str, Any] = field(default_factory=dict)
 
-    def to_kwargs(self) -> Dict[str, Any]:
-        data = {
-            key: value
-            for key, value in asdict(self).items()
-            if key != "extra" and value is not None
-        }
+    def to_kwargs(self) -> dict[str, Any]:
+        data = {key: value for key, value in asdict(self).items() if key != "extra" and value is not None}
         data.update(self.extra)
         return data
 
@@ -179,7 +176,7 @@ class ModelCfg:
     stg2fuse_weight: float = 0.0
     stg2fuse_learnweight: bool = False
     stg2nlayers: int = 1
-    stg2fuse_type: Optional[str] = "basic"
+    stg2fuse_type: str | None = "basic"
     stg2_type: str = "full"
     stg2_useproj: bool = True
 
@@ -190,13 +187,13 @@ class DataCfg:
     device: str = "cuda"
     num_workers: int = 8
     cache_num_workers: int = 0
-    worker_multiprocessing_context: Optional[str] = "spawn"
+    worker_multiprocessing_context: str | None = "spawn"
     omp_num_threads: int = 16
     machine: str = "5080"
     dataset: str = "kitti360"
     datasets_folder: str = ""
     dataset_name: str = ""
-    dataroot: Optional[str] = None
+    dataroot: str | None = None
     maptype: str = "satellite"
     traindownsample: int = 4
     train_ratio: float = 0.85
@@ -210,7 +207,7 @@ class DataCfg:
     neg_samples_num: int = 1000
     negs_num_per_query: int = 10
     epochs_num: int = 100
-    resize: List[int] = field(default_factory=lambda: [256, 256])
+    resize: list[int] = field(default_factory=lambda: [256, 256])
     color_jitter: float = 0.0
     quant_size: float = 2.0
     db_cropsize: int = 256
@@ -222,7 +219,7 @@ class DataCfg:
     test_method: str = "hard_resize"
     majority_weight: float = 0.01
     efficient_ram_testing: bool = False
-    recall_values: List[int] = field(default_factory=lambda: [1, 5, 10, 20])
+    recall_values: list[int] = field(default_factory=lambda: [1, 5, 10, 20])
     brightness: float = 0.0
     contrast: float = 0.0
     saturation: float = 0.0
@@ -238,12 +235,12 @@ class DataCfg:
     bev_rotate: float = 0.0
     bev_rotate_mode: str = "nearest"
     bev_jitter: float = 0.0
-    bev_mean: List[float] = field(default_factory=lambda: [0.485, 0.456, 0.406])
-    bev_std: List[float] = field(default_factory=lambda: [0.229, 0.224, 0.225])
+    bev_mean: list[float] = field(default_factory=lambda: [0.485, 0.456, 0.406])
+    bev_std: list[float] = field(default_factory=lambda: [0.229, 0.224, 0.225])
     sph_resize: float = 1.0
     sph_jitter: float = 0.0
-    sph_mean: List[float] = field(default_factory=lambda: [0.485, 0.456, 0.406])
-    sph_std: List[float] = field(default_factory=lambda: [0.229, 0.224, 0.225])
+    sph_mean: list[float] = field(default_factory=lambda: [0.485, 0.456, 0.406])
+    sph_std: list[float] = field(default_factory=lambda: [0.229, 0.224, 0.225])
 
 
 @dataclass
@@ -258,9 +255,9 @@ class LossCfg:
 
 @dataclass
 class LoggingCfg:
-    csv: Dict[str, Any] = field(default_factory=lambda: {"enabled": True})
-    litlogger: Dict[str, Any] = field(default_factory=lambda: {"enabled": False})
-    extra: Dict[str, Any] = field(default_factory=dict)
+    csv: dict[str, Any] = field(default_factory=lambda: {"enabled": True})
+    litlogger: dict[str, Any] = field(default_factory=lambda: {"enabled": False})
+    extra: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -271,11 +268,11 @@ class Config:
     loss: LossCfg = field(default_factory=LossCfg)
     logging: LoggingCfg = field(default_factory=LoggingCfg)
     seed: int = 0
-    resume: Optional[str] = None
+    resume: str | None = None
     save_dir: str = "default"
     exp_name: str = "none"
-    ckpt_path: Optional[str] = None
-    extra: Dict[str, Any] = field(default_factory=dict)
+    ckpt_path: str | None = None
+    extra: dict[str, Any] = field(default_factory=dict)
 
     _SECTION_ORDER = ("data", "model", "loss", "logging", "trainer")
     _LIST_CLI_FIELDS = {
@@ -288,7 +285,7 @@ class Config:
     }
 
     @classmethod
-    def from_argv(cls, argv: Optional[Iterable[str]] = None) -> Tuple["Config", str]:
+    def from_argv(cls, argv: Iterable[str] | None = None) -> tuple[Config, str]:
         tokens = list(argv or [])
         command = "fit"
         if tokens and not tokens[0].startswith("-"):
@@ -296,8 +293,8 @@ class Config:
             if command == "train":
                 command = "fit"
 
-        config_paths: List[str] = []
-        overrides: Dict[str, Any] = {}
+        config_paths: list[str] = []
+        overrides: dict[str, Any] = {}
         index = 0
         while index < len(tokens):
             token = tokens[index]
@@ -332,14 +329,14 @@ class Config:
                 index += 1
             _set_nested(overrides, key, value)
 
-        merged: Dict[str, Any] = {}
+        merged: dict[str, Any] = {}
         for path in config_paths:
             _deep_update(merged, _load_yaml(path))
         _deep_update(merged, overrides)
         return cls.from_dict(merged), command
 
     @classmethod
-    def from_dict(cls, values: Mapping[str, Any]) -> "Config":
+    def from_dict(cls, values: Mapping[str, Any]) -> Config:
         cfg = cls()
         cfg.update(values)
         return cfg.resolve()
@@ -360,7 +357,7 @@ class Config:
         for key, value in values.items():
             self._set_known_field(key, value)
 
-    def resolve(self) -> "Config":
+    def resolve(self) -> Config:
         self._resolve_machine_paths()
         self._normalise_values()
         self._resolve_experiment_name()
@@ -379,10 +376,10 @@ class Config:
             return "16-mixed"
         return "32-true"
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
-    def to_flat_dict(self) -> Dict[str, Any]:
+    def to_flat_dict(self) -> dict[str, Any]:
         flat = {
             "seed": self.seed,
             "resume": self.resume,
@@ -403,7 +400,9 @@ class Config:
         raise AttributeError(name)
 
     def __setattr__(self, name: str, value: Any) -> None:
-        root_fields = {item.name for item in fields(type(self))} if hasattr(type(self), "__dataclass_fields__") else set()
+        root_fields = (
+            {item.name for item in fields(type(self))} if hasattr(type(self), "__dataclass_fields__") else set()
+        )
         if name.startswith("_") or name in root_fields:
             object.__setattr__(self, name, value)
             return
@@ -432,7 +431,7 @@ class Config:
         for key, value in values.items():
             self._set_known_field(key, value, preferred=section_name)
 
-    def _set_known_field(self, key: str, value: Any, preferred: Optional[str] = None) -> None:
+    def _set_known_field(self, key: str, value: Any, preferred: str | None = None) -> None:
         root_fields = _field_names(self)
         if key in root_fields and key not in self._SECTION_ORDER:
             setattr(self, key, _coerce_value(getattr(self, key), value))
@@ -441,9 +440,7 @@ class Config:
         ordered_sections = []
         if preferred is not None:
             ordered_sections.append(preferred)
-        ordered_sections.extend(
-            section for section in ("data", "model", "loss") if section not in ordered_sections
-        )
+        ordered_sections.extend(section for section in ("data", "model", "loss") if section not in ordered_sections)
         for section_name in ordered_sections:
             section = getattr(self, section_name)
             if key in _field_names(section):
@@ -515,6 +512,5 @@ class Config:
             )
         if self.mining == "msls_weighted" and self.dataset_name != "msls":
             raise ValueError(
-                "msls_weighted mining can only be applied to msls dataset, "
-                f"but you're using it on {self.dataset_name}"
+                f"msls_weighted mining can only be applied to msls dataset, but you're using it on {self.dataset_name}"
             )

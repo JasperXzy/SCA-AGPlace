@@ -1,9 +1,5 @@
+from torch import nn
 
-
-
-
-
-import torch.nn as nn
 from mag_vlaq.models.blocks.ffns import FCODE
 
 
@@ -17,12 +13,11 @@ class DiffBlock(nn.Module):
 
         diff_type = self.args.diff_type
 
-
-        for e in diff_type.split('_'):
-            e, act = e.split('@')
-            if e == None:
+        for e in diff_type.split("_"):
+            e, act = e.split("@")
+            if e is None:
                 None
-            elif e == 'fcode':
+            elif e == "fcode":
                 self.blocks.append(FCODE(dim, act, args=self.args))
             else:
                 raise NotImplementedError
@@ -33,12 +28,12 @@ class DiffBlock(nn.Module):
         # identity = x
         outlist = []
         for block in self.blocks:
-            if z0 is not None: # for CDE
+            if z0 is not None:  # for CDE
                 out = block(x, z0=z0)
-            else: 
+            else:
                 out = block(x)
             outlist.append(out)
-        
+
         out = sum(outlist)
 
         return out

@@ -4,7 +4,6 @@ import sys
 import traceback
 from os.path import join
 
-
 _RICH_CONSOLE = None
 
 

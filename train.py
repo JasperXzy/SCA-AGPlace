@@ -1,5 +1,5 @@
-from pathlib import Path
 import sys
+from pathlib import Path
 
 
 def _setup_paths():
@@ -14,7 +14,6 @@ def _setup_paths():
 _setup_paths()
 
 from mag_vlaq.lightning.cli import main as cli_main
-
 
 if __name__ == "__main__":
     cli_main()

@@ -1,2 +1,1 @@
 """MAG-VLAQ package."""
-

@@ -1,20 +1,19 @@
-
-
-
-
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-import torchvision.models as TVM
+from torch import nn
 
-
-
-from mag_vlaq.models.layers.sparse_utils import SimpleSparse, sparse_broadcast_add, sparse_broadcast_mul, sparse_global_avg_pool
 from mag_vlaq.models.layers.eca_block import ECABasicBlock
 from mag_vlaq.models.layers.pooling import MinkGeM
+from mag_vlaq.models.layers.sparse_utils import (
+    SimpleSparse,
+    sparse_broadcast_add,
+    sparse_global_avg_pool,
+)
+
 
 class SparseLinear(nn.Module):
     """Wraps nn.Linear to operate on SimpleSparse (pointwise linear transform)."""
+
     def __init__(self, in_features, out_features):
         super().__init__()
         self.linear = nn.Linear(in_features, out_features)
@@ -24,21 +23,17 @@ class SparseLinear(nn.Module):
 
 
 def select_act(act):
-    if act is None:
+    if act is None or act is None:
         out = nn.Identity()
-    elif act == None:
-        out = nn.Identity()
-    elif act == 'relu':
+    elif act == "relu":
         out = nn.ReLU()
-    elif act == 'tanh':
+    elif act == "tanh":
         out = nn.Tanh()
-    elif act == 'sigmoid':
+    elif act == "sigmoid":
         out = nn.Sigmoid()
     else:
         raise NotImplementedError
     return out
-
-
 
 
 class BasicBlock(nn.Module):
@@ -85,14 +80,14 @@ class Basic(nn.Module):
 
 class GeM(nn.Module):
     def __init__(self, p=3, eps=1e-6):
-        super(GeM, self).__init__()
+        super().__init__()
         self.p = nn.Parameter(torch.ones(1) * p)
         self.eps = eps
 
     def forward(self, x):
         # x: [b, c, h, w]
         assert len(x.shape) == 4
-        x = nn.functional.avg_pool2d(x.clamp(min=self.eps).pow(self.p), (x.size(-2), x.size(-1))).pow(1./self.p)
+        x = nn.functional.avg_pool2d(x.clamp(min=self.eps).pow(self.p), (x.size(-2), x.size(-1))).pow(1.0 / self.p)
         assert len(x.shape) == 4
         return x
 
@@ -100,15 +95,16 @@ class GeM(nn.Module):
 class FFNFuse(nn.Module):
     def __init__(self, dim, stg2fuse_type):
         super().__init__()
-        self.stg2fuse_type = stg2fuse_type.split('_')
+        self.stg2fuse_type = stg2fuse_type.split("_")
         self.ffns = nn.ModuleList()
         for e in self.stg2fuse_type:
-            if e == None:
+            if e is None:
                 None
-            elif e == 'basic':
+            elif e == "basic":
                 self.ffns.append(Basic(dim))
             else:
                 raise NotImplementedError
+
     def forward(self, x):
         outlist = []
         for ffn in self.ffns:
@@ -116,7 +112,6 @@ class FFNFuse(nn.Module):
             outlist.append(out)
         outsum = sum(outlist)
         return outsum
-                                                                                                 
 
 
 class Stage2FuseBlockAdd(nn.Module):
@@ -125,7 +120,7 @@ class Stage2FuseBlockAdd(nn.Module):
         if args is None:
             raise ValueError("Stage2FuseBlockAdd requires explicit args; parse CLI/config in the entrypoint.")
         self.args = args
-        
+
         self.projsfusebev = nn.ModuleList()
         self.projsfuseimg = nn.ModuleList()
         self.projsfusevox = nn.ModuleList()
@@ -136,14 +131,11 @@ class Stage2FuseBlockAdd(nn.Module):
         self.projsimgfuse = nn.ModuleList()
         self.projsvoxfuse = nn.ModuleList()
         self.ffnsfuse = nn.ModuleList()
-        for i in range(self.args.stg2nlayers):
-            if self.args.stg2_useproj == True:
-                self.projsfuseimg.append(nn.Sequential(
-                    nn.Linear(fusedim, imgdim)))
-                self.projsfusevox.append(nn.Sequential(
-                    nn.Linear(fusedim, voxdim)))
-                self.projsimgfuse.append(nn.Sequential(
-                    nn.Conv2d(imgdim, fusedim, kernel_size=1)))
+        for _i in range(self.args.stg2nlayers):
+            if self.args.stg2_useproj:
+                self.projsfuseimg.append(nn.Sequential(nn.Linear(fusedim, imgdim)))
+                self.projsfusevox.append(nn.Sequential(nn.Linear(fusedim, voxdim)))
+                self.projsimgfuse.append(nn.Sequential(nn.Conv2d(imgdim, fusedim, kernel_size=1)))
                 self.projsvoxfuse.append(SparseLinear(voxdim, fusedim))
             else:
                 self.projsfusebev.append(nn.Identity())
@@ -155,7 +147,6 @@ class Stage2FuseBlockAdd(nn.Module):
             self.ffnsimg.append(BasicBlock(imgdim))
             self.ffnsvox.append(ECABasicBlock(voxdim, voxdim))
             self.ffnsfuse.append(FFNFuse(dim=fusedim, stg2fuse_type=self.args.stg2fuse_type))
-
 
         # self.poolbev = GeM()
         self.poolimage = GeM()
@@ -175,7 +166,7 @@ class Stage2FuseBlockAdd(nn.Module):
             projvoxfuse = self.projsvoxfuse[i]
             ffnfuse = self.ffnsfuse[i]
 
-            if self.args.stg2_type == 'full':
+            if self.args.stg2_type == "full":
                 fusevec_img = projfuseimg(fusevec)
                 fusevec_vox = projfusevox(fusevec)
                 imgmap = imgmap + fusevec_img.unsqueeze(-1).unsqueeze(-1)
@@ -184,28 +175,24 @@ class Stage2FuseBlockAdd(nn.Module):
                 imgmap = ffnimg(imgmap)
                 # bevmap = ffnbev(bevmap)
                 voxmap = ffnvox(voxmap)
-                imgoutvec = self.poolimage(imgmap).flatten(1) 
+                imgoutvec = self.poolimage(imgmap).flatten(1)
                 voxoutvec = self.poolvox(voxmap).flatten(1)
 
-                if self.args.stg2fuse_type == None:
+                if self.args.stg2fuse_type is None:
                     None
                 else:
                     imgmap_fuse = projimgfuse(imgmap)
                     voxmap_fuse = projvoxfuse(voxmap)
-                    imgvec_fuse = F.adaptive_avg_pool2d(imgmap_fuse, [1,1]).squeeze(-1).squeeze(-1)
+                    imgvec_fuse = F.adaptive_avg_pool2d(imgmap_fuse, [1, 1]).squeeze(-1).squeeze(-1)
                     voxvec_fuse = sparse_global_avg_pool(voxmap_fuse)
                     fusevec = fusevec + imgvec_fuse + voxvec_fuse
                     fusevec = ffnfuse(fusevec)
-
 
             else:
                 raise NotImplementedError
 
         return fusevec, imgoutvec, None, voxoutvec
-    
 
-
-    
     def forward_imgbev(self, imagemap, bevmap, voxmap, fusevec):
         # imagefeatmap: [b, c, h, w]
         # bevfeatmap: [b, c, h, w]
@@ -224,7 +211,7 @@ class Stage2FuseBlockAdd(nn.Module):
             # projvoxfuse = self.projsvoxfuse[i]
             ffnfuse = self.ffnsfuse[i]
 
-            if self.args.stg2_type == 'full':
+            if self.args.stg2_type == "full":
                 fusevec_image = projfuseimage(fusevec)
                 fusevec_bev = projfusebev(fusevec)
                 # fusevec_vox = projfusevox(fusevec)
@@ -235,43 +222,38 @@ class Stage2FuseBlockAdd(nn.Module):
                 imagemap = ffnimage(imagemap)
                 bevmap = ffnbev(bevmap)
                 # voxmap = ffnvox(voxmap)
-                imageoutvec = self.poolimage(imagemap).flatten(1) 
+                imageoutvec = self.poolimage(imagemap).flatten(1)
                 bevoutvec = self.poolbev(bevmap).flatten(1)
                 # voxoutvec = self.poolvox(voxmap).flatten(1)
 
-                if self.args.stg2fuse_type == 'res':
+                if self.args.stg2fuse_type == "res":
                     None
                 else:
                     imgmap_fuse = projimgfuse(imagemap)
                     bevmap_fuse = projbevfuse(bevmap)
                     # voxmap_fuse = projvoxfuse(voxmap)
-                    imgvec_fuse = F.adaptive_avg_pool2d(imgmap_fuse, [1,1]).squeeze(-1).squeeze(-1)
-                    bevvec_fuse = F.adaptive_avg_pool2d(bevmap_fuse, [1,1]).squeeze(-1).squeeze(-1)
-                    # voxvec_fuse = ME.MinkowskiGlobalAvgPooling()(voxmap_fuse) 
-                    fusevec = fusevec + imgvec_fuse + bevvec_fuse 
+                    imgvec_fuse = F.adaptive_avg_pool2d(imgmap_fuse, [1, 1]).squeeze(-1).squeeze(-1)
+                    bevvec_fuse = F.adaptive_avg_pool2d(bevmap_fuse, [1, 1]).squeeze(-1).squeeze(-1)
+                    # voxvec_fuse = ME.MinkowskiGlobalAvgPooling()(voxmap_fuse)
+                    fusevec = fusevec + imgvec_fuse + bevvec_fuse
                     # fusevec = fusevec + imagevec_fuse + voxvec_fuse.F
                     fusevec = ffnfuse(fusevec)
 
-            elif self.args.stg2_type == 'image_bev':
+            elif self.args.stg2_type == "image_bev":
                 imagemap = ffnimage(imagemap)
                 bevmap = ffnbev(bevmap)
-                imageoutvec = self.poolimage(imagemap).flatten(1) 
+                imageoutvec = self.poolimage(imagemap).flatten(1)
                 bevoutvec = self.poolbev(bevmap).flatten(1)
             else:
                 raise NotImplementedError
 
         return fusevec, imageoutvec, bevoutvec, None
         # return fusevec, imageoutvec, None, voxoutvec
-    
-
-
-
-
 
     def forward(self, imagemap, bevmap, voxmap, fusevec, type):
-        if type == 'vox':
+        if type == "vox":
             fusevec, imageoutvec, bevoutvec, voxoutvec = self.forward_imgvox(imagemap, bevmap, voxmap, fusevec)
-        elif type == 'bev':
+        elif type == "bev":
             fusevec, imageoutvec, bevoutvec, voxoutvec = self.forward_imgbev(imagemap, bevmap, voxmap, fusevec)
         else:
             raise NotImplementedError

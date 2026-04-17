@@ -118,8 +118,8 @@ class MagVlaqModule(pl.LightningModule):
         assign_features(all_features, q_indices, q_features, test_ds, self.cfg.test_method)
 
         all_features_np = all_features.detach().cpu().numpy()
-        queries_features = all_features_np[test_ds.database_num:]
-        database_features = all_features_np[:test_ds.database_num]
+        queries_features = all_features_np[test_ds.database_num :]
+        database_features = all_features_np[: test_ds.database_num]
         recalls, _ = compute_recall(
             self.cfg,
             queries_features,
@@ -127,10 +127,7 @@ class MagVlaqModule(pl.LightningModule):
             test_ds,
             self.cfg.test_method,
         )
-        metrics = {
-            f"val/R@{value}": float(recalls[index])
-            for index, value in enumerate(self.cfg.recall_values)
-        }
+        metrics = {f"val/R@{value}": float(recalls[index]) for index, value in enumerate(self.cfg.recall_values)}
         tracked = [
             metrics.get("val/R@1", 0.0),
             metrics.get("val/R@5", 0.0),
@@ -191,8 +188,7 @@ class MagVlaqModule(pl.LightningModule):
             self.best_r1r5r10ep = [*current, real_epoch]
 
         now = (
-            f"Now : R@1 = {current[0]:.1f}   R@5 = {current[1]:.1f}   "
-            f"R@10 = {current[2]:.1f}   epoch = {real_epoch:d}"
+            f"Now : R@1 = {current[0]:.1f}   R@5 = {current[1]:.1f}   R@10 = {current[2]:.1f}   epoch = {real_epoch:d}"
         )
         best = (
             f"Best: R@1 = {self.best_r1r5r10ep[0]:.1f}   "

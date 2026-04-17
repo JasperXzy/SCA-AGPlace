@@ -1,8 +1,8 @@
 import torch
-import torch.nn as nn
+from torch import nn
 
-from mag_vlaq.losses.pairwise import compute_other_loss
 from mag_vlaq.lightning.losses.retrieval import compute_triplet_loss
+from mag_vlaq.losses.pairwise import compute_other_loss
 
 
 class MagVlaqLoss(nn.Module):

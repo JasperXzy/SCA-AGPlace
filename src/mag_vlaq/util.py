@@ -9,10 +9,8 @@ def get_flops(model, input_shape=(480, 640)):
 
 
 def _strip_module_prefix(state_dict):
-    if any(k.startswith("module.") for k in state_dict.keys()):
-        return OrderedDict(
-            (k.replace("module.", "", 1), v) for k, v in state_dict.items()
-        )
+    if any(k.startswith("module.") for k in state_dict):
+        return OrderedDict((k.replace("module.", "", 1), v) for k, v in state_dict.items())
     return state_dict
 
 

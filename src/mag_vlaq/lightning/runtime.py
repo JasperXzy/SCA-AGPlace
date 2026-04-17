@@ -4,18 +4,16 @@ import importlib
 import importlib.util
 import logging
 import os
-from datetime import timedelta
-from typing import Any, Dict
 import warnings
+from datetime import timedelta
+from typing import Any
 
 import torch
 
 try:
     import pytorch_lightning as pl
 except ImportError as exc:  # pragma: no cover - depends on environment
-    raise ImportError(
-        "PyTorch Lightning is required for the Lightning training entrypoint."
-    ) from exc
+    raise ImportError("PyTorch Lightning is required for the Lightning training entrypoint.") from exc
 
 try:
     from pytorch_lightning.strategies import DDPStrategy
@@ -120,7 +118,7 @@ def initialise_litlogger_capture(logger_config: Any, cfg: Config) -> None:
             return
 
 
-def build_trainer_kwargs(cfg: Config, loops_num: int, logger_config: Any) -> Dict[str, Any]:
+def build_trainer_kwargs(cfg: Config, loops_num: int, logger_config: Any) -> dict[str, Any]:
     trainer_config = cfg.trainer.to_kwargs()
     cuda_available = torch.cuda.is_available()
     trainer_config.setdefault("accelerator", "gpu" if cuda_available else "auto")
@@ -134,21 +132,15 @@ def build_trainer_kwargs(cfg: Config, loops_num: int, logger_config: Any) -> Dic
     trainer_config.setdefault("log_every_n_steps", 20)
     trainer_config.setdefault("enable_model_summary", False)
     trainer_config.setdefault("sync_batchnorm", cuda_available)
-    trainer_config["strategy"] = _normalise_strategy(
-        trainer_config.get("strategy", "auto")
-    )
+    trainer_config["strategy"] = _normalise_strategy(trainer_config.get("strategy", "auto"))
 
     callbacks = trainer_config.pop("callbacks", None) or []
-    has_progress_bar = any(
-        type(callback).__name__.endswith("ProgressBar") for callback in callbacks
-    )
+    has_progress_bar = any(type(callback).__name__.endswith("ProgressBar") for callback in callbacks)
     from mag_vlaq.lightning.callbacks import TripletCacheRefreshCallback
 
     callbacks.append(TripletCacheRefreshCallback(loops_num=loops_num))
     if trainer_config.get("enable_progress_bar", True) and not has_progress_bar:
-        callbacks.append(
-            pl.callbacks.RichProgressBar(leave=True, console_kwargs={"stderr": True})
-        )
+        callbacks.append(pl.callbacks.RichProgressBar(leave=True, console_kwargs={"stderr": True}))
     callbacks.append(_checkpoint_callback())
     trainer_config["callbacks"] = callbacks
     trainer_config.setdefault("logger", logger_config)
@@ -163,14 +155,9 @@ def setup_runtime_logging(cfg: Config) -> None:
     logging.getLogger("PIL").setLevel(logging.WARNING)
 
 
-def log_startup(cfg: Config, trainer_config: Dict[str, Any], loops_num: int) -> None:
-    trainer_log_config = {
-        key: value for key, value in trainer_config.items()
-        if key not in {"callbacks", "logger"}
-    }
-    callback_names = ", ".join(
-        type(callback).__name__ for callback in trainer_config["callbacks"]
-    )
+def log_startup(cfg: Config, trainer_config: dict[str, Any], loops_num: int) -> None:
+    trainer_log_config = {key: value for key, value in trainer_config.items() if key not in {"callbacks", "logger"}}
+    callback_names = ", ".join(type(callback).__name__ for callback in trainer_config["callbacks"])
     logging.info("Config: %s", cfg.to_flat_dict())
     logging.info("Lightning trainer config: %s", trainer_log_config)
     logging.info("Lightning callbacks: %s", callback_names)
@@ -196,7 +183,7 @@ def _get_litlogger_class():
     return None
 
 
-def _metadata_to_strings(metadata: Any) -> Dict[str, str]:
+def _metadata_to_strings(metadata: Any) -> dict[str, str]:
     if not isinstance(metadata, dict):
         return {}
     return {str(key): str(value) for key, value in metadata.items()}
@@ -205,13 +192,13 @@ def _metadata_to_strings(metadata: Any) -> Dict[str, str]:
 def _iter_loggers(logger_config: Any):
     if logger_config in (None, False):
         return []
-    if isinstance(logger_config, (list, tuple)):
+    if isinstance(logger_config, list | tuple):
         return logger_config
     return [logger_config]
 
 
 def _logger_names(logger_config: Any) -> str:
-    if isinstance(logger_config, (list, tuple)):
+    if isinstance(logger_config, list | tuple):
         return ", ".join(type(logger).__name__ for logger in logger_config)
     return type(logger_config).__name__
 

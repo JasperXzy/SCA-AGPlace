@@ -55,8 +55,8 @@ def sparse_global_max_pool(x):
     """
     B = x.num_batches
     idx = x.batch_indices.unsqueeze(1).expand_as(x.F)
-    out = torch.full((B, x.F.shape[1]), float('-inf'), device=x.F.device, dtype=x.F.dtype)
-    out.scatter_reduce_(0, idx, x.F, reduce='amax')
+    out = torch.full((B, x.F.shape[1]), float("-inf"), device=x.F.device, dtype=x.F.dtype)
+    out.scatter_reduce_(0, idx, x.F, reduce="amax")
     return out
 
 

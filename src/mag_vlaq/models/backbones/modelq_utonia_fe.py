@@ -1,9 +1,11 @@
+import logging
 import sys
 from pathlib import Path
+
 import torch
-import torch.nn as nn
+from torch import nn
+
 from mag_vlaq.models.layers.sparse_utils import SimpleSparse
-import logging
 
 # Add Utonia to python path dynamically
 utonia_path = Path(__file__).resolve().parents[4] / "demo" / "Utonia"
@@ -11,7 +13,8 @@ utonia_path = str(utonia_path)
 if utonia_path not in sys.path:
     sys.path.append(utonia_path)
 
-from utonia.model import PointTransformerV3, load as utonia_load
+from utonia.model import PointTransformerV3
+from utonia.model import load as utonia_load
 from utonia.structure import Point
 from utonia.utils import offset2batch
 
@@ -26,6 +29,7 @@ class UtoniaFE(nn.Module):
     points without valid projection use zeros (handled by Utonia's
     Causal Modality Blinding).
     """
+
     def __init__(self, out_channels=256, planes=(64, 128, 256), args=None):
         super().__init__()
         if args is None:
@@ -33,12 +37,12 @@ class UtoniaFE(nn.Module):
         self.args = args
 
         self.planes = planes
-        pretrained_name = getattr(self.args, 'utonia_pretrained', 'none')
-        freeze_mode = getattr(self.args, 'unfreeze_utonia_mode', 'frozen')
-        extract_stages = getattr(self.args, 'utonia_extract_stages', '1_2_3')
-        self.target_stages = [int(s) for s in extract_stages.split('_')]
+        pretrained_name = getattr(self.args, "utonia_pretrained", "none")
+        freeze_mode = getattr(self.args, "unfreeze_utonia_mode", "frozen")
+        extract_stages = getattr(self.args, "utonia_extract_stages", "1_2_3")
+        self.target_stages = [int(s) for s in extract_stages.split("_")]
 
-        if pretrained_name != 'none':
+        if pretrained_name != "none":
             # Load pretrained checkpoint to get architecture config
             ckpt = utonia_load(pretrained_name, ckpt_only=True)
             pretrained_config = ckpt["config"]
@@ -57,11 +61,14 @@ class UtoniaFE(nn.Module):
             # Load pretrained weights (full, including original 9ch embedding)
             model_state = self.ptv3.state_dict()
             pretrained_state = ckpt["state_dict"]
-            filtered_state = {k: v for k, v in pretrained_state.items()
-                              if k in model_state and v.shape == model_state[k].shape}
+            filtered_state = {
+                k: v for k, v in pretrained_state.items() if k in model_state and v.shape == model_state[k].shape
+            }
             self.ptv3.load_state_dict(filtered_state, strict=False)
-            logging.info(f"Utonia pretrained loaded. Loaded: {len(filtered_state)}/{len(pretrained_state)} keys, "
-                         f"Skipped (shape mismatch or missing): {len(pretrained_state) - len(filtered_state)}")
+            logging.info(
+                f"Utonia pretrained loaded. Loaded: {len(filtered_state)}/{len(pretrained_state)} keys, "
+                f"Skipped (shape mismatch or missing): {len(pretrained_state) - len(filtered_state)}"
+            )
 
             # Read enc_channels from pretrained config
             enc_channels = list(pretrained_config["enc_channels"])
@@ -94,16 +101,16 @@ class UtoniaFE(nn.Module):
             )
 
         # Freeze/unfreeze logic
-        if pretrained_name != 'none':
+        if pretrained_name != "none":
             # Freeze all first
             for param in self.ptv3.parameters():
                 param.requires_grad = False
 
             num_stages = len(self.ptv3.enc)
-            if freeze_mode == 'full':
+            if freeze_mode == "full":
                 for param in self.ptv3.parameters():
                     param.requires_grad = True
-            elif freeze_mode == 'last1':
+            elif freeze_mode == "last1":
                 # Unfreeze last 1 encoder stage only
                 stage_name = f"enc{num_stages - 1}"
                 if hasattr(self.ptv3.enc, stage_name):
@@ -116,7 +123,7 @@ class UtoniaFE(nn.Module):
 
             # lrutonia=0 overrides freeze_mode → fully freeze PTv3 so no
             # grad is computed and the optimizer gate in train.py drops it.
-            lrutonia = getattr(self.args, 'lrutonia', 0.0)
+            lrutonia = getattr(self.args, "lrutonia", 0.0)
             if lrutonia == 0.0:
                 for param in self.ptv3.parameters():
                     param.requires_grad = False
@@ -124,16 +131,16 @@ class UtoniaFE(nn.Module):
 
             n_total = sum(p.numel() for p in self.ptv3.parameters())
             n_trainable = sum(p.numel() for p in self.ptv3.parameters() if p.requires_grad)
-            logging.info(f"Utonia freeze_mode={freeze_mode}: {n_trainable}/{n_total} params trainable "
-                         f"({100*n_trainable/n_total:.1f}%)")
+            logging.info(
+                f"Utonia freeze_mode={freeze_mode}: {n_trainable}/{n_total} params trainable "
+                f"({100 * n_trainable / n_total:.1f}%)"
+            )
 
         # Target stage channels from enc_channels
         self.utonia_channels = [enc_channels[s] for s in self.target_stages]
 
         # Projection layers to map Utonia's native channels to the requested planes
-        self.projs = nn.ModuleList([
-            nn.Linear(self.utonia_channels[i], planes[i]) for i in range(len(planes))
-        ])
+        self.projs = nn.ModuleList([nn.Linear(self.utonia_channels[i], planes[i]) for i in range(len(planes))])
 
     def forward(self, data_dict):
         """
@@ -145,17 +152,17 @@ class UtoniaFE(nn.Module):
         - normal: FloatTensor of [N, 3] (precomputed per-point normals)
         - offset: IntTensor or LongTensor of [B]
         """
-        grid_coord = data_dict['grid_coord'].clone()
-        coord = data_dict['coord'].clone()
-        offset = data_dict['offset']
-        rgb = data_dict.get('rgb', torch.zeros_like(coord))
-        normals = data_dict.get('normal', torch.zeros_like(coord))
+        grid_coord = data_dict["grid_coord"].clone()
+        coord = data_dict["coord"].clone()
+        offset = data_dict["offset"]
+        rgb = data_dict.get("rgb", torch.zeros_like(coord))
+        normals = data_dict.get("normal", torch.zeros_like(coord))
         batch = offset2batch(offset)
 
-        if not getattr(self, '_logged_once', False):
+        if not getattr(self, "_logged_once", False):
             with torch.no_grad():
-                c = data_dict['coord']
-                g = data_dict['grid_coord']
+                c = data_dict["coord"]
+                g = data_dict["grid_coord"]
                 logging.debug(
                     f"[Utonia in] coord range=[{c.min().item():.2f},{c.max().item():.2f}] "
                     f"mean={c.mean().item():.2f} std={c.std().item():.2f}  "
@@ -176,9 +183,9 @@ class UtoniaFE(nn.Module):
         # 9ch feat keys = (coord, color, normal). coord is already in the
         # official space (meters * UTONIA_GLOBAL_SCALE) from collate.
         feat_xyz = coord
-        data_dict['grid_coord'] = grid_coord
-        data_dict['coord'] = coord
-        data_dict['feat'] = torch.cat([feat_xyz, rgb, normals], dim=1)
+        data_dict["grid_coord"] = grid_coord
+        data_dict["coord"] = coord
+        data_dict["feat"] = torch.cat([feat_xyz, rgb, normals], dim=1)
         point = Point(data_dict)
 
         # 2. Forward pass through PTv3 encoder

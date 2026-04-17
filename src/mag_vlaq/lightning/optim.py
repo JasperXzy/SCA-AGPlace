@@ -1,38 +1,35 @@
 import logging
-from typing import Iterable, List, Tuple
+from collections.abc import Iterable
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 from mag_vlaq.models.modeldb import ModelDB
 from mag_vlaq.models.modelq import ModelQ
 
 
-def _trainable(parameters: Iterable[torch.nn.Parameter]) -> List[torch.nn.Parameter]:
+def _trainable(parameters: Iterable[torch.nn.Parameter]) -> list[torch.nn.Parameter]:
     return [p for p in parameters if p.requires_grad]
 
 
-def _add_group(groups: List[dict], params: Iterable[torch.nn.Parameter], lr: float):
+def _add_group(groups: list[dict], params: Iterable[torch.nn.Parameter], lr: float):
     params = _trainable(params)
     if params:
         groups.append({"params": params, "lr": lr})
 
 
-def build_param_groups(model: nn.Module, modelq: nn.Module, cfg) -> Tuple[List[dict], List[dict]]:
-    params_db: List[dict] = []
+def build_param_groups(model: nn.Module, modelq: nn.Module, cfg) -> tuple[list[dict], list[dict]]:
+    params_db: list[dict] = []
     if isinstance(model, ModelDB):
         if getattr(cfg, "lrdino", 0.0) > 0.0:
             dino_params = list(model.dbimage_fes.parameters())
-            base_params = [
-                p for name, p in model.named_parameters()
-                if not name.startswith("dbimage_fes.")
-            ]
+            base_params = [p for name, p in model.named_parameters() if not name.startswith("dbimage_fes.")]
             _add_group(params_db, _trainable(dino_params), cfg.lrdino)
             _add_group(params_db, _trainable(base_params), cfg.lrdb)
         else:
             _add_group(params_db, _trainable(model.parameters()), cfg.lrdb)
 
-    params_q: List[dict] = []
+    params_q: list[dict] = []
     if isinstance(modelq, ModelQ):
         if getattr(cfg, "lrdino", 0.0) > 0.0:
             _add_group(params_q, _trainable(modelq.image_fe.parameters()), cfg.lrdino)
@@ -48,10 +45,9 @@ def build_param_groups(model: nn.Module, modelq: nn.Module, cfg) -> Tuple[List[d
         _add_group(params_q, utonia_proj, cfg.lrpc)
 
         other_vox = [
-            p for name, p in modelq.vox_fe.named_parameters()
-            if p.requires_grad
-            and not name.startswith("ptv3.")
-            and not name.startswith("projs.")
+            p
+            for name, p in modelq.vox_fe.named_parameters()
+            if p.requires_grad and not name.startswith("ptv3.") and not name.startswith("projs.")
         ]
         _add_group(params_q, other_vox, cfg.lrpc)
         _add_group(params_q, _trainable(modelq.vox_pool.parameters()), cfg.lrpc)

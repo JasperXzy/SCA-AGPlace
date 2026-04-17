@@ -1,1 +1,1 @@
-__all__ = ["MagVlaqModule", "MagVlaqDataModule"]
+__all__ = ["MagVlaqDataModule", "MagVlaqModule"]

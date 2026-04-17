@@ -6,9 +6,7 @@ import torch
 try:
     import pytorch_lightning as pl
 except ImportError as exc:  # pragma: no cover - depends on environment
-    raise ImportError(
-        "PyTorch Lightning is required for the Lightning training entrypoint."
-    ) from exc
+    raise ImportError("PyTorch Lightning is required for the Lightning training entrypoint.") from exc
 
 from mag_vlaq.config import Config
 from mag_vlaq.lightning.runtime import (

@@ -27,11 +27,11 @@ class SparseFeatureCache:
 
     def __setitem__(self, indexes, values):
         assert values.shape[1] == self.shape[1], f"{values.shape[1]} {self.shape[1]}"
-        for index, value in zip(indexes, values):
+        for index, value in zip(indexes, values, strict=False):
             self.matrix[int(index)] = value.astype(self.dtype, copy=False)
 
     def __getitem__(self, index):
-        if hasattr(index, "__len__") and not isinstance(index, (str, bytes)):
+        if hasattr(index, "__len__") and not isinstance(index, str | bytes):
             return np.array([self.matrix[int(i)] for i in index])
         return self.matrix[int(index)]
 
@@ -91,11 +91,7 @@ class TripletCacheBuilder:
         self.device = pl_module.device
         self.world_size = int(getattr(trainer, "world_size", 1))
         self.rank = int(getattr(trainer, "global_rank", 0))
-        self.ddp_on = (
-            self.world_size > 1
-            and dist.is_available()
-            and dist.is_initialized()
-        )
+        self.ddp_on = self.world_size > 1 and dist.is_available() and dist.is_initialized()
 
     def refresh(self, progress=None):
         db_was_training = self.pl_module.model.training
@@ -129,18 +125,16 @@ class TripletCacheBuilder:
         if self.rank == 0:
             for query_index in _progress(sampled_queries, progress, "mine"):
                 query_features = self._query_features(query_index, cache)
-                best_positive = self._best_positive_index(
-                    query_index, cache, query_features
-                )
+                best_positive = self._best_positive_index(query_index, cache, query_features)
                 soft_positives = self.dataset.soft_positives_per_query[query_index]
                 neg_indexes = np.random.choice(
                     self.dataset.database_num,
                     size=self.dataset.negs_num_per_query + len(soft_positives),
                     replace=False,
                 )
-                neg_indexes = np.setdiff1d(
-                    neg_indexes, soft_positives, assume_unique=True
-                )[: self.dataset.negs_num_per_query]
+                neg_indexes = np.setdiff1d(neg_indexes, soft_positives, assume_unique=True)[
+                    : self.dataset.negs_num_per_query
+                ]
                 triplets.append((query_index, best_positive, *neg_indexes))
         return self._triplets_tensor(triplets)
 
@@ -154,32 +148,22 @@ class TripletCacheBuilder:
         if self.rank == 0:
             for query_index in _progress(sampled_queries, progress, "mine"):
                 query_features = self._query_features(query_index, cache)
-                best_positive = self._best_positive_index(
-                    query_index, cache, query_features
-                )
+                best_positive = self._best_positive_index(query_index, cache, query_features)
                 neg_indexes = np.random.choice(
                     self.dataset.database_num,
                     self.dataset.neg_samples_num,
                     replace=False,
                 )
                 soft_positives = self.dataset.soft_positives_per_query[query_index]
-                neg_indexes = np.setdiff1d(
-                    neg_indexes, soft_positives, assume_unique=True
-                )
-                neg_indexes = np.unique(
-                    np.concatenate([self.dataset.neg_cache[query_index], neg_indexes])
-                )
-                neg_indexes = self._hardest_negatives(
-                    cache, query_features, neg_indexes
-                )
+                neg_indexes = np.setdiff1d(neg_indexes, soft_positives, assume_unique=True)
+                neg_indexes = np.unique(np.concatenate([self.dataset.neg_cache[query_index], neg_indexes]))
+                neg_indexes = self._hardest_negatives(cache, query_features, neg_indexes)
                 self.dataset.neg_cache[query_index] = neg_indexes
                 triplets.append((query_index, best_positive, *neg_indexes))
         return self._triplets_tensor(triplets)
 
     def _mine_partial(self, progress):
-        sampled_queries = self._sample_queries(
-            weighted=self.dataset.mining == "msls_weighted"
-        )
+        sampled_queries = self._sample_queries(weighted=self.dataset.mining == "msls_weighted")
         sampled_database = self._sample_database()
         positives = self._positive_indexes(sampled_queries)
         database_indexes = list(np.unique(list(sampled_database) + positives))
@@ -190,16 +174,10 @@ class TripletCacheBuilder:
         if self.rank == 0:
             for query_index in _progress(sampled_queries, progress, "mine"):
                 query_features = self._query_features(query_index, cache)
-                best_positive = self._best_positive_index(
-                    query_index, cache, query_features
-                )
+                best_positive = self._best_positive_index(query_index, cache, query_features)
                 soft_positives = self.dataset.soft_positives_per_query[query_index]
-                neg_indexes = np.setdiff1d(
-                    sampled_database, soft_positives, assume_unique=True
-                )
-                neg_indexes = self._hardest_negatives(
-                    cache, query_features, neg_indexes
-                )
+                neg_indexes = np.setdiff1d(sampled_database, soft_positives, assume_unique=True)
+                neg_indexes = self._hardest_negatives(cache, query_features, neg_indexes)
                 triplets.append((query_index, best_positive, *neg_indexes))
         return self._triplets_tensor(triplets)
 
@@ -210,16 +188,8 @@ class TripletCacheBuilder:
         subset_db = Subset(parent_ds, db_indices)
         subset_q = Subset(parent_ds, q_indices)
 
-        db_sampler = (
-            DistributedSampler(subset_db, shuffle=False, drop_last=False)
-            if self.ddp_on
-            else None
-        )
-        q_sampler = (
-            DistributedSampler(subset_q, shuffle=False, drop_last=False)
-            if self.ddp_on
-            else None
-        )
+        db_sampler = DistributedSampler(subset_db, shuffle=False, drop_last=False) if self.ddp_on else None
+        q_sampler = DistributedSampler(subset_q, shuffle=False, drop_last=False) if self.ddp_on else None
         cache_workers = _cache_num_workers(self.cfg)
         loader_kwargs = {
             "batch_size": self.cfg.infer_batch_size,
@@ -306,12 +276,8 @@ class TripletCacheBuilder:
         else:
             parent_ds = subset_ds
             subset_indices = list(range(len(parent_ds)))
-        db_indices = [
-            index for index in subset_indices if index < parent_ds.database_num
-        ]
-        q_indices = [
-            index for index in subset_indices if index >= parent_ds.database_num
-        ]
+        db_indices = [index for index in subset_indices if index < parent_ds.database_num]
+        q_indices = [index for index in subset_indices if index >= parent_ds.database_num]
         return parent_ds, db_indices, q_indices
 
     def _sample_queries(self, weighted=False):
@@ -354,19 +320,14 @@ class TripletCacheBuilder:
         return tensor.detach().cpu().numpy().astype(np.int64, copy=False)
 
     def _positive_indexes(self, sampled_queries):
-        positives = [
-            self.dataset.hard_positives_per_query[int(index)]
-            for index in sampled_queries
-        ]
+        positives = [self.dataset.hard_positives_per_query[int(index)] for index in sampled_queries]
         positives = [int(item) for group in positives for item in group]
         return list(np.unique(positives))
 
     def _query_features(self, query_index, cache):
         features = cache[int(query_index) + self.dataset.database_num]
         if features is None:
-            raise RuntimeError(
-                f"Features were not computed for query index {int(query_index)}."
-            )
+            raise RuntimeError(f"Features were not computed for query index {int(query_index)}.")
         return features
 
     def _best_positive_index(self, query_index, cache, query_features):
@@ -381,9 +342,7 @@ class TripletCacheBuilder:
         neg_features = cache[neg_samples]
         index = faiss.IndexFlatL2(self.cfg.features_dim)
         index.add(neg_features)
-        _, neg_nums = index.search(
-            query_features.reshape(1, -1), self.dataset.negs_num_per_query
-        )
+        _, neg_nums = index.search(query_features.reshape(1, -1), self.dataset.negs_num_per_query)
         return neg_samples[neg_nums.reshape(-1)].astype(np.int32)
 
     def _triplets_tensor(self, triplets):

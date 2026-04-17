@@ -2,7 +2,8 @@
 # Ported from MinkowskiEngine to pure PyTorch + torch_scatter
 
 import torch
-import torch.nn as nn
+from torch import nn
+
 from mag_vlaq.models.layers.sparse_utils import SimpleSparse, sparse_global_avg_pool, sparse_global_max_pool
 
 
@@ -14,17 +15,17 @@ class PoolingWrapper(nn.Module):
         self.in_dim = in_dim
         self.output_dim = output_dim
 
-        if pool_method == 'MAC':
+        if pool_method == "MAC":
             assert in_dim == output_dim
             self.pooling = MAC(input_dim=in_dim)
-        elif pool_method == 'SPoC':
+        elif pool_method == "SPoC":
             assert in_dim == output_dim
             self.pooling = SPoC(input_dim=in_dim)
-        elif pool_method == 'GeM':
+        elif pool_method == "GeM":
             assert in_dim == output_dim
             self.pooling = MinkGeM(input_dim=in_dim)
         else:
-            raise NotImplementedError('Unknown pooling method: {}'.format(pool_method))
+            raise NotImplementedError(f"Unknown pooling method: {pool_method}")
 
     def forward(self, x: SimpleSparse):
         return self.pooling(x)
@@ -52,13 +53,13 @@ class SPoC(nn.Module):
 
 class MinkGeM(nn.Module):
     def __init__(self, input_dim=None, p=3, eps=1e-6):
-        super(MinkGeM, self).__init__()
+        super().__init__()
         self.p = nn.Parameter(torch.ones(1) * p)
         self.eps = eps
 
     def forward(self, x: SimpleSparse):
         assert isinstance(x, SimpleSparse)
-        if not getattr(self, '_sanity_done', False):
+        if not getattr(self, "_sanity_done", False):
             batch_ids = x.C[:, 0]
             assert batch_ids.min() >= 0, "negative batch id"
             self._sanity_done = True
@@ -69,5 +70,5 @@ class MinkGeM(nn.Module):
         )
         # Global average pool
         temp = sparse_global_avg_pool(powered)
-        output = temp.pow(1. / self.p)
+        output = temp.pow(1.0 / self.p)
         return output
