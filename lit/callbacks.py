@@ -5,8 +5,6 @@ from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 import sys
 
-import torch
-
 try:
     import pytorch_lightning as pl
 except ImportError as exc:  # pragma: no cover - depends on environment
@@ -210,28 +208,6 @@ def _load_lightning_commons():
     return module
 
 
-def _hide_validation_progress(trainer):
-    progress_bar = getattr(trainer, "progress_bar_callback", None)
-    progress = getattr(progress_bar, "progress", None)
-    val_task = getattr(progress_bar, "val_progress_bar_id", None)
-    if progress is None or val_task is None:
-        return
-    try:
-        progress.update(val_task, visible=False)
-        refresh = getattr(progress_bar, "refresh", None)
-        if refresh is not None:
-            refresh()
-    except Exception:
-        pass
-
-
-def _has_more_epochs(trainer):
-    max_epochs = getattr(trainer, "max_epochs", None)
-    if max_epochs is None or max_epochs < 0:
-        return True
-    return int(trainer.current_epoch) + 1 < int(max_epochs)
-
-
 @contextmanager
 def _paused_lightning_progress(trainer, resume=True):
     progress_bar = getattr(trainer, "progress_bar_callback", None)
@@ -323,90 +299,3 @@ class TripletCacheRefreshCallback(pl.Callback):
                 )
 
             logging.info("triplet cache ready in %.2fs", time.time() - t0)
-
-
-class RetrievalEvalCallback(pl.Callback):
-    def __init__(self, loops_num):
-        super().__init__()
-        self.loops_num = loops_num
-        self.best_r1r5r10ep = [0.0, 0.0, 0.0, 0]
-
-    def on_validation_epoch_end(self, trainer, pl_module):
-        import test
-
-        cfg = pl_module.cfg
-        cfg.device = str(pl_module.device)
-
-        recalls_tensor = torch.zeros(3, device=pl_module.device, dtype=torch.float32)
-        with _paused_lightning_progress(trainer, resume=_has_more_epochs(trainer)):
-            _hide_validation_progress(trainer)
-            if trainer.is_global_zero:
-                logging.info(
-                    "retrieval eval started: database=%d queries=%d batch_size=%d",
-                    trainer.datamodule.test_ds.database_num,
-                    trainer.datamodule.test_ds.queries_num,
-                    cfg.infer_batch_size,
-                )
-            old_disable_dataset_tqdm = getattr(cfg, "disable_dataset_tqdm", False)
-            old_test_progress_callback = getattr(test, "_TEST_PROGRESS_CALLBACK", None)
-            cfg.disable_dataset_tqdm = True
-            try:
-                with _TripletProgress(
-                    enabled=trainer.is_global_zero,
-                    prefix="eval",
-                ) as progress:
-                    if hasattr(test, "set_progress_callback"):
-                        test.set_progress_callback(progress if trainer.is_global_zero else None)
-                    recalls, _, _ = test.test(
-                        cfg,
-                        trainer.datamodule.test_ds,
-                        pl_module.model,
-                        test_method=cfg.test_method,
-                        modelq=pl_module.modelq,
-                        rank=trainer.global_rank,
-                        world_size=trainer.world_size,
-                    )
-            finally:
-                if hasattr(test, "set_progress_callback"):
-                    test.set_progress_callback(old_test_progress_callback)
-                cfg.disable_dataset_tqdm = old_disable_dataset_tqdm
-
-        if trainer.is_global_zero:
-            recalls_tensor = torch.tensor(
-                [float(recalls[0]), float(recalls[1]), float(recalls[2])],
-                device=pl_module.device,
-                dtype=torch.float32,
-            )
-
-        if trainer.world_size > 1:
-            recalls_tensor = trainer.strategy.broadcast(recalls_tensor, src=0)
-
-        current = [float(value) for value in recalls_tensor.detach().cpu().tolist()]
-        real_epoch = int(trainer.current_epoch) // self.loops_num
-        if sum(current) > sum(self.best_r1r5r10ep[:3]):
-            self.best_r1r5r10ep = [*current, real_epoch]
-
-        metrics = {
-            "val/R@1": current[0],
-            "val/R@5": current[1],
-            "val/R@10": current[2],
-            "val/R_sum": sum(current),
-        }
-        pl_module.log_dict(metrics, prog_bar=True, rank_zero_only=False)
-
-        now = (
-            f"Now : R@1 = {current[0]:.1f}   R@5 = {current[1]:.1f}   "
-            f"R@10 = {current[2]:.1f}   epoch = {real_epoch:d}"
-        )
-        best = (
-            f"Best: R@1 = {self.best_r1r5r10ep[0]:.1f}   "
-            f"R@5 = {self.best_r1r5r10ep[1]:.1f}   "
-            f"R@10 = {self.best_r1r5r10ep[2]:.1f}   "
-            f"epoch = {self.best_r1r5r10ep[3]:d}"
-        )
-        if trainer.is_global_zero:
-            commons = _load_lightning_commons()
-            logging.info(now)
-            logging.info(best)
-            commons.logging_info(cfg, now)
-            commons.logging_info(cfg, best)

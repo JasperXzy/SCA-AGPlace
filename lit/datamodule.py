@@ -1,7 +1,7 @@
 import logging
 
 import torch
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Subset
 
 try:
     import pytorch_lightning as pl
@@ -11,11 +11,15 @@ except ImportError as exc:  # pragma: no cover - depends on environment
 from datasets.datasets_ws_kitti360 import (
     KITTI360BaseDataset,
     KITTI360TripletsDataset,
+    kitti360_collate_fn_cache_db,
+    kitti360_collate_fn_cache_q,
     kitti360_collate_fn,
 )
 from datasets.datasets_ws_nuscenes import (
     NuScenesBaseDataset,
     NuScenesTripletsDataset,
+    nuscenes_collate_fn_cache_db,
+    nuscenes_collate_fn_cache_q,
     nuscenes_collate_fn,
 )
 
@@ -26,14 +30,6 @@ def _worker_kwargs(cfg, num_workers):
     if num_workers > 0 and context not in (None, "", "default"):
         kwargs["multiprocessing_context"] = context
     return kwargs
-
-
-class _ValidationSignalDataset(Dataset):
-    def __len__(self):
-        return 1
-
-    def __getitem__(self, index):
-        return torch.tensor(0)
 
 
 class SCADataModule(pl.LightningDataModule):
@@ -96,4 +92,46 @@ class SCADataModule(pl.LightningDataModule):
         )
 
     def val_dataloader(self):
-        return DataLoader(_ValidationSignalDataset(), batch_size=1)
+        if self.test_ds is None:
+            raise RuntimeError("SCADataModule.setup() must run before val_dataloader().")
+
+        self.test_ds.test_method = self.cfg.test_method
+        collate_db, collate_q = self._eval_collate_fns()
+        database_ds = Subset(self.test_ds, range(self.test_ds.database_num))
+        queries_ds = Subset(
+            self.test_ds,
+            range(
+                self.test_ds.database_num,
+                self.test_ds.database_num + self.test_ds.queries_num,
+            ),
+        )
+        query_batch_size = (
+            1 if self.cfg.test_method == "single_query" else self.cfg.infer_batch_size
+        )
+        loader_kwargs = {
+            "num_workers": self.cfg.num_workers,
+            "pin_memory": str(self.cfg.device).startswith("cuda"),
+            "shuffle": False,
+        }
+        loader_kwargs.update(_worker_kwargs(self.cfg, self.cfg.num_workers))
+        return [
+            DataLoader(
+                database_ds,
+                batch_size=self.cfg.infer_batch_size,
+                collate_fn=collate_db,
+                **loader_kwargs,
+            ),
+            DataLoader(
+                queries_ds,
+                batch_size=query_batch_size,
+                collate_fn=collate_q,
+                **loader_kwargs,
+            ),
+        ]
+
+    def _eval_collate_fns(self):
+        if self.cfg.dataset == "kitti360":
+            return kitti360_collate_fn_cache_db, kitti360_collate_fn_cache_q
+        if self.cfg.dataset == "nuscenes":
+            return nuscenes_collate_fn_cache_db, nuscenes_collate_fn_cache_q
+        raise ValueError(f"Unsupported dataset: {self.cfg.dataset}")

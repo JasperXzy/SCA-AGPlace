@@ -143,14 +143,14 @@ def build_trainer_kwargs(cfg: Config, loops_num: int, logger_config: Any) -> Dic
     has_progress_bar = any(
         type(callback).__name__.endswith("ProgressBar") for callback in callbacks
     )
-    from lit.callbacks import RetrievalEvalCallback, TripletCacheRefreshCallback
+    from lit.callbacks import TripletCacheRefreshCallback
 
     callbacks.append(TripletCacheRefreshCallback(loops_num=loops_num))
     if trainer_config.get("enable_progress_bar", True) and not has_progress_bar:
         callbacks.append(
             pl.callbacks.RichProgressBar(leave=True, console_kwargs={"stderr": True})
         )
-    callbacks.extend([RetrievalEvalCallback(loops_num=loops_num), _checkpoint_callback()])
+    callbacks.append(_checkpoint_callback())
     trainer_config["callbacks"] = callbacks
     trainer_config.setdefault("logger", logger_config)
     return trainer_config
