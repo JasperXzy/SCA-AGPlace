@@ -21,6 +21,15 @@ model:
   otherloss_type: bce
   otherloss_weight: 0.01
   amp_dtype: none
+  image_learnweight: true
+  vox_learnweight: true
+  shallow_learnweight: true
+  imagevoxorg_weight: 1.0
+  imagevoxorg_learnweight: true
+  shalloworg_learnweight: true
+  stg2imagevox_learnweight: true
+  stg2fuse_weight: 0.1
+  stg2fuse_learnweight: true
 
 data:
   train_batch_size: 2

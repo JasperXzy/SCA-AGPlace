@@ -2,8 +2,8 @@ data:
   dataset: nuscenes
   dataset_name: nuscenes
   machine: 5080
-  camnames: fl_f_fr_bl_b_br
-  maptype: satellite
+  camnames: [fl, f, fr, bl, b, br]
+  maptype: [satellite]
   traindownsample: 4
   train_ratio: 0.85
   read_pc: true

@@ -25,6 +25,8 @@ from mag_vlaq.models.layers.sparse_utils import batched_coordinates, sparse_quan
 
 USE_MM_QUERY = True
 
+_LOG = logging.getLogger(__name__)
+
 
 base_transform = T.Compose(
     [
@@ -79,7 +81,7 @@ def collate_fn(batch):
     for i, (local_indexes, global_indexes) in enumerate(
         zip(triplets_local_indexes, triplets_global_indexes, strict=False)
     ):
-        local_indexes += len(global_indexes) * i  # Increment local indexes by offset (len(global_indexes) is 12)
+        triplets_local_indexes[i] = local_indexes + len(global_indexes) * i
     output_dict = {
         "image": images,
         "bev": bevs,
@@ -149,7 +151,6 @@ def generate_bev_from_pc(pc, w=200, max_thd=2):
     pc = pc / (2 * max_thd) * w
     pc = pc.astype(np.int64)
     bin_max = np.max(pc, axis=0)
-    # print(bin_max)
     bev = np.zeros([w + 1, w + 1], dtype=np.float32)
     assert np.all(bin_max <= bev.shape[0])
     bev[pc[:, 0], pc[:, 1]] = pc[:, 2]
@@ -227,7 +228,7 @@ def load_bev(file_path, dataset_name, bev_w, args):  # filename is the same as l
         pc = torch.tensor(pc).float()
     else:
         pc = torch.tensor(pc).float()
-        tfpc = TVT.Compose(
+        tfpc = T.Compose(
             [
                 PCJitterPoints(sigma=0.001, clip=0.002),
                 PCRemoveRandomPoints(r=(0.0, 0.1)),
@@ -264,26 +265,26 @@ def load_bev(file_path, dataset_name, bev_w, args):  # filename is the same as l
     else:
         raise NotImplementedError
 
-    tf = TVT.Compose(
+    tf = T.Compose(
         [
-            TVT.Resize(resize_size, interpolation=resize_mode),
-            TVT.RandomRotation(args.bev_rotate, interpolation=rotate_mode),
-            TVT.CenterCrop(args.bev_cropsize),
-            TVT.ColorJitter(
+            T.Resize(resize_size, interpolation=resize_mode),
+            T.RandomRotation(args.bev_rotate, interpolation=rotate_mode),
+            T.CenterCrop(args.bev_cropsize),
+            T.ColorJitter(
                 brightness=args.bev_jitter,
                 contrast=args.bev_jitter,
                 saturation=args.bev_jitter,
                 hue=min(0.5, args.bev_jitter),
             ),
-            TVT.ToTensor(),
-            TVT.Normalize(mean=args.bev_mean, std=args.bev_std),
+            T.ToTensor(),
+            T.Normalize(mean=args.bev_mean, std=args.bev_std),
         ]
     )
     bev = tf(bev)
 
     # # ---- DEBUG:viz
     # bev = bev*args.bev_std + args.bev_mean
-    # bev = TVT.ToPILImage()(bev)
+    # bev = T.ToPILImage()(bev)
     # bev.show()
 
     # ==== sph
@@ -292,17 +293,17 @@ def load_bev(file_path, dataset_name, bev_w, args):  # filename is the same as l
     assert args.sph_resize <= 1
     resize_ratio = random.uniform(args.sph_resize, 2 - args.sph_resize)
     resize_size = int(resize_ratio * min(_w, _h))
-    tf = TVT.Compose(
+    tf = T.Compose(
         [
-            TVT.Resize(resize_size, interpolation=InterpolationMode.NEAREST),
-            TVT.ColorJitter(
+            T.Resize(resize_size, interpolation=InterpolationMode.NEAREST),
+            T.ColorJitter(
                 brightness=args.sph_jitter,
                 contrast=args.sph_jitter,
                 saturation=args.sph_jitter,
                 hue=min(0.5, args.sph_jitter),
             ),
-            TVT.ToTensor(),
-            TVT.Normalize(mean=args.sph_mean, std=args.sph_std),
+            T.ToTensor(),
+            T.Normalize(mean=args.sph_mean, std=args.sph_std),
         ]
     )
     sph = tf(sph)
@@ -503,7 +504,7 @@ class TripletsDataset(BaseDataset):
             np.array([len(p) for p in self.hard_positives_per_query], dtype=object) == 0
         )[0]
         if len(queries_without_any_hard_positive) != 0:
-            logging.info(
+            _LOG.info(
                 f"There are {len(queries_without_any_hard_positive)} queries without any positives "
                 + "within the training set. They won't be considered as they're useless for training."
             )
@@ -530,11 +531,11 @@ class TripletsDataset(BaseDataset):
             try:
                 night_indexes = np.where(np.array([n.split("_")[0] == "night" for n in notes]))[0]
                 sideways_indexes = np.where(np.array([n.split("_")[1] == "sideways" for n in notes]))[0]
-            except IndexError:
+            except IndexError as exc:
                 raise RuntimeError(
                     "You're using msls_weighted mining but this dataset "
                     + "does not have night/sideways information. Are you using Mapillary SLS?"
-                )
+                ) from exc
             self.weights = np.ones(self.queries_num)
             assert len(night_indexes) != 0 and len(sideways_indexes) != 0, (
                 "There should be night and sideways images for msls_weighted mining, but there are none. Are you using Mapillary SLS?"
@@ -542,7 +543,7 @@ class TripletsDataset(BaseDataset):
             self.weights[night_indexes] += self.queries_num / len(night_indexes)
             self.weights[sideways_indexes] += self.queries_num / len(sideways_indexes)
             self.weights /= self.weights.sum()
-            logging.info(
+            _LOG.info(
                 f"#sideways_indexes [{len(sideways_indexes)}/{self.queries_num}]; "
                 + "#night_indexes; [{len(night_indexes)}/{self.queries_num}]"
             )

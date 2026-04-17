@@ -7,6 +7,8 @@ from torch import nn
 from mag_vlaq.models.modeldb import ModelDB
 from mag_vlaq.models.modelq import ModelQ
 
+_LOG = logging.getLogger(__name__)
+
 
 def _trainable(parameters: Iterable[torch.nn.Parameter]) -> list[torch.nn.Parameter]:
     return [p for p in parameters if p.requires_grad]
@@ -91,17 +93,17 @@ def configure_mag_vlaq_optimizers(model: nn.Module, modelq: nn.Module, cfg):
 def _log_optimizer_summary(optimizer, params_db, params_q, modelq):
     num_params_db = _num_params(params_db)
     num_params_q = _num_params(params_q)
-    logging.info("Number of parameters in optimizer/db groups: %d", num_params_db)
-    logging.info("Number of parameters in optimizer/q groups: %d", num_params_q)
+    _LOG.info("Number of parameters in optimizer/db groups: %d", num_params_db)
+    _LOG.info("Number of parameters in optimizer/q groups: %d", num_params_q)
     for i, group in enumerate(optimizer.param_groups):
         n_params = sum(p.numel() for p in group["params"])
-        logging.info("[param_group %d] %.3fM params @ lr=%s", i, n_params / 1e6, group["lr"])
+        _LOG.info("[param_group %d] %.3fM params @ lr=%s", i, n_params / 1e6, group["lr"])
 
     if hasattr(modelq, "vox_fe") and hasattr(modelq.vox_fe, "ptv3"):
         ptv3 = modelq.vox_fe.ptv3
         n_total = sum(p.numel() for p in ptv3.parameters())
         n_train = sum(p.numel() for p in ptv3.parameters() if p.requires_grad)
-        logging.info("[PTv3] trainable %.2fM / total %.2fM", n_train / 1e6, n_total / 1e6)
+        _LOG.info("[PTv3] trainable %.2fM / total %.2fM", n_train / 1e6, n_total / 1e6)
 
 
 def _num_params(groups):

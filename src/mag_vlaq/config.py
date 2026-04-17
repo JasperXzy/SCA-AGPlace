@@ -6,14 +6,17 @@ import re
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
+
+try:
+    import yaml
+except ImportError:  # pragma: no cover - depends on environment
+    yaml = None
 
 
 def _load_yaml(path: str) -> dict[str, Any]:
-    try:
-        import yaml
-    except ImportError as exc:  # pragma: no cover - depends on environment
-        raise ImportError("PyYAML is required when using --config YAML files.") from exc
+    if yaml is None:  # pragma: no cover - depends on environment
+        raise ImportError("PyYAML is required when using --config YAML files.")
 
     config_path = Path(path)
     if not config_path.exists():
@@ -46,11 +49,11 @@ def _parse_scalar(value: str) -> Any:
     if lower in {"none", "null"}:
         return None
     if value[:1] in "[{":
+        if yaml is None:
+            return value
         try:
-            import yaml
-
             return yaml.safe_load(value)
-        except Exception:
+        except yaml.YAMLError:
             return value
     if re.fullmatch(r"[+-]?(0|[1-9][0-9]*)", value):
         return int(value)
@@ -86,18 +89,76 @@ def _coerce_value(current: Any, value: Any) -> Any:
     return copy.deepcopy(value)
 
 
-def _split_tokens(value: Any) -> list[str]:
+def _split_token_string(value: str, separator: str = "_") -> list[str]:
+    delimiter = "," if "," in value else separator
+    return [part.strip() for part in value.split(delimiter) if part.strip()]
+
+
+def _normalise_token_list(value: Any, field_name: str, item_type: type = str, separator: str = "_") -> list[Any]:
     if value is None:
         return []
+
     if isinstance(value, str):
-        return [part for part in value.split("_") if part]
-    return list(value)
+        raw_items: list[Any] = _split_token_string(value, separator=separator)
+    else:
+        raw_items = []
+        for item in value:
+            if isinstance(item, str) and (separator in item or "," in item):
+                raw_items.extend(_split_token_string(item, separator=separator))
+            else:
+                raw_items.append(item)
+
+    return [_coerce_token_item(item, field_name, item_type) for item in raw_items]
+
+
+def _coerce_token_item(item: Any, field_name: str, item_type: type) -> Any:
+    try:
+        return item_type(item)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must be a list of {item_type.__name__} values; got {item!r}") from exc
+
+
+def _normalise_optional_token_list(value: Any, field_name: str, item_type: type = str) -> list[Any] | None:
+    if value is None:
+        return None
+    return _normalise_token_list(value, field_name=field_name, item_type=item_type)
+
+
+def _validate_choices(field_name: str, values: Iterable[str], choices: set[str]) -> None:
+    unknown = [value for value in values if value not in choices]
+    if unknown:
+        raise ValueError(f"{field_name} has unsupported values {unknown}; expected one of {sorted(choices)}")
+
+
+def _join_tokens(values: Any) -> str:
+    if isinstance(values, str):
+        return values
+    return "_".join(str(value) for value in values)
 
 
 def _expand_user(value: Any) -> Any:
     if isinstance(value, str) and value.startswith("~"):
         return os.path.expanduser(value)
     return value
+
+
+def _machine_config_path(machine: str) -> Path:
+    config_dir = os.environ.get("MAG_VLAQ_MACHINE_CONFIG_DIR")
+    if config_dir:
+        return Path(config_dir).expanduser() / f"{machine}.yaml"
+    return Path(__file__).resolve().parents[2] / "configs" / "machines" / f"{machine}.yaml"
+
+
+def _load_machine_paths(machine: str) -> dict[str, Any]:
+    machine_config = _machine_config_path(machine)
+    if not machine_config.exists():
+        return {}
+
+    values = _load_yaml(str(machine_config))
+    paths = values.get("paths", values)
+    if not isinstance(paths, Mapping):
+        raise TypeError(f"Machine config {machine_config} must be a mapping or contain a 'paths' mapping")
+    return {str(dataset): _expand_user(path) for dataset, path in paths.items() if path}
 
 
 @dataclass
@@ -135,48 +196,48 @@ class ModelCfg:
     lrdb: float = 1e-5
     lrdino: float = 0.0
     unfreeze_dino_mode: str = "frozen"
-    dino_extract_blocks: str = "7_15_23"
+    dino_extract_blocks: list[int] = field(default_factory=lambda: [7, 15, 23])
     utonia_pretrained: str = "utonia"
     unfreeze_utonia_mode: str = "last1"
     lrutonia: float = 1e-5
-    utonia_extract_stages: str = "0_2_4"
+    utonia_extract_stages: list[int] = field(default_factory=lambda: [0, 2, 4])
     amp_dtype: str = "none"
     share_db: bool = False
     share_dbfe: bool = False
     mm_imgfe_dim: int = 1024
-    mm_voxfe_planes: str = "64_128_256"
+    mm_voxfe_planes: list[int] = field(default_factory=lambda: [64, 128, 256])
     mm_voxfe_dim: int = 256
-    mm_bevfe_planes: str = "64_128_256"
+    mm_bevfe_planes: list[int] = field(default_factory=lambda: [64, 128, 256])
     mm_bevfe_dim: int = 256
     mm_stg2fuse_dim: int = 256
-    output_type: Any = "image_vox_shallow"
+    output_type: list[str] = field(default_factory=lambda: ["image", "vox", "shallow"])
     output_l2: bool = True
-    final_type: Any = "imageorg_voxorg_shalloworg_stg2image_stg2vox"
+    final_type: list[str] = field(default_factory=lambda: ["imageorg", "voxorg", "shalloworg", "stg2image", "stg2vox"])
     final_fusetype: str = "add"
     final_l2: bool = False
     image_embed: str = "stg2image"
     cloud_embed: str = "stg2vox"
     image_weight: float = 1.0
-    image_learnweight: bool = False
+    image_learnweight: bool = True
     vox_weight: float = 1.0
-    vox_learnweight: bool = False
+    vox_learnweight: bool = True
     shallow_weight: float = 1.0
-    shallow_learnweight: bool = False
-    diff_type: str = "fcode@relu"
+    shallow_learnweight: bool = True
+    diff_type: list[str] = field(default_factory=lambda: ["fcode@relu"])
     diff_direction: str = "backward"
     odeint_method: str = "euler"
     odeint_size: float = 0.1
     tol: float = 1e-3
-    imagevoxorg_weight: float = 0.0
-    imagevoxorg_learnweight: bool = False
+    imagevoxorg_weight: float = 1.0
+    imagevoxorg_learnweight: bool = True
     shalloworg_weight: float = 1.0
-    shalloworg_learnweight: bool = False
+    shalloworg_learnweight: bool = True
     stg2imagevox_weight: float = 0.1
-    stg2imagevox_learnweight: bool = False
-    stg2fuse_weight: float = 0.0
-    stg2fuse_learnweight: bool = False
+    stg2imagevox_learnweight: bool = True
+    stg2fuse_weight: float = 0.1
+    stg2fuse_learnweight: bool = True
     stg2nlayers: int = 1
-    stg2fuse_type: str | None = "basic"
+    stg2fuse_type: list[str] | None = field(default_factory=lambda: ["basic"])
     stg2_type: str = "full"
     stg2_useproj: bool = True
 
@@ -194,10 +255,10 @@ class DataCfg:
     datasets_folder: str = ""
     dataset_name: str = ""
     dataroot: str | None = None
-    maptype: str = "satellite"
+    maptype: list[str] = field(default_factory=lambda: ["satellite"])
     traindownsample: int = 4
     train_ratio: float = 0.85
-    camnames: str = "00"
+    camnames: list[str] = field(default_factory=lambda: ["00"])
     train_batch_size: int = 16
     infer_batch_size: int = 32
     cache_refresh_rate: int = 4000
@@ -274,14 +335,24 @@ class Config:
     ckpt_path: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
-    _SECTION_ORDER = ("data", "model", "loss", "logging", "trainer")
-    _LIST_CLI_FIELDS = {
+    _SECTION_ORDER: ClassVar[tuple[str, ...]] = ("data", "model", "loss", "logging", "trainer")
+    _LIST_CLI_FIELDS: ClassVar[set[str]] = {
+        "camnames",
+        "diff_type",
+        "dino_extract_blocks",
+        "final_type",
+        "maptype",
+        "mm_bevfe_planes",
+        "mm_voxfe_planes",
+        "output_type",
         "resize",
         "recall_values",
+        "stg2fuse_type",
         "bev_mean",
         "bev_std",
         "sph_mean",
         "sph_std",
+        "utonia_extract_stages",
     }
 
     @classmethod
@@ -388,8 +459,7 @@ class Config:
             "ckpt_path": self.ckpt_path,
         }
         for section_name in ("model", "data", "loss"):
-            for key, value in asdict(getattr(self, section_name)).items():
-                flat[key] = value
+            flat.update({key: value for key, value in asdict(getattr(self, section_name)).items()})
         return flat
 
     def __getattr__(self, name: str) -> Any:
@@ -460,25 +530,28 @@ class Config:
                 raise KeyError(f"Unknown config key: {key}")
 
     def _resolve_machine_paths(self) -> None:
-        machine_paths = {
-            "4090": {
-                "kitti360": "/mnt/sda/ZhengyiXu/datasets/cmvpr/kitti360/KITTI-360",
-                "nuscenes": "/mnt/sda/ZhengyiXu/datasets/radar/nuscenes",
-            },
-            "5080": {
-                "kitti360": "/home/jasperxzy/Datasets/cmvpr/kitti360/KITTI-360",
-                "nuscenes": "/home/jasperxzy/Datasets/radar/nuscenes",
-            },
-        }
-        default_root = machine_paths.get(self.data.machine, {}).get(self.data.dataset)
+        machine_paths = _load_machine_paths(str(self.data.machine))
+        default_root = machine_paths.get(self.data.dataset)
         if default_root and not self.data.dataroot:
             self.data.dataroot = default_root
         if self.data.dataset and not self.data.dataset_name:
             self.data.dataset_name = self.data.dataset
 
     def _normalise_values(self) -> None:
-        self.model.output_type = _split_tokens(self.model.output_type)
-        self.model.final_type = _split_tokens(self.model.final_type)
+        self.model.dino_extract_blocks = _normalise_token_list(
+            self.model.dino_extract_blocks, "model.dino_extract_blocks", int
+        )
+        self.model.utonia_extract_stages = _normalise_token_list(
+            self.model.utonia_extract_stages, "model.utonia_extract_stages", int
+        )
+        self.model.mm_voxfe_planes = _normalise_token_list(self.model.mm_voxfe_planes, "model.mm_voxfe_planes", int)
+        self.model.mm_bevfe_planes = _normalise_token_list(self.model.mm_bevfe_planes, "model.mm_bevfe_planes", int)
+        self.model.output_type = _normalise_token_list(self.model.output_type, "model.output_type")
+        self.model.final_type = _normalise_token_list(self.model.final_type, "model.final_type")
+        self.model.diff_type = _normalise_token_list(self.model.diff_type, "model.diff_type")
+        self.model.stg2fuse_type = _normalise_optional_token_list(self.model.stg2fuse_type, "model.stg2fuse_type")
+        self.data.maptype = _normalise_token_list(self.data.maptype, "data.maptype")
+        self.data.camnames = _normalise_token_list(self.data.camnames, "data.camnames")
         self.data.dataroot = _expand_user(self.data.dataroot)
         self.data.datasets_folder = _expand_user(self.data.datasets_folder)
         self.model.utonia_pretrained = _expand_user(self.model.utonia_pretrained)
@@ -491,10 +564,10 @@ class Config:
                 f"{self.seed}_"
                 f"ep{self.epochs_num}"
                 f"_{self.dataset}"
-                f"_{self.camnames}"
+                f"_{_join_tokens(self.camnames)}"
                 f"_{self.cache_refresh_rate}"
                 f"_{self.queries_per_epoch}"
-                f"_{self.maptype}"
+                f"_{_join_tokens(self.maptype)}"
                 f"_trbs{self.train_batch_size}"
                 f"_{self.infer_batch_size}"
                 f"_{self.traindownsample}"
@@ -514,3 +587,13 @@ class Config:
             raise ValueError(
                 f"msls_weighted mining can only be applied to msls dataset, but you're using it on {self.dataset_name}"
             )
+        _validate_choices("model.output_type", self.model.output_type, {"image", "vox", "shallow", "addorg"})
+        _validate_choices(
+            "model.final_type",
+            self.model.final_type,
+            {"imageorg", "voxorg", "shalloworg", "stg2image", "stg2vox", "stg2fuse"},
+        )
+        _validate_choices("data.maptype", self.data.maptype, {"satellite", "roadmap"})
+        _validate_choices("data.camnames", self.data.camnames, {"00", "0203", "f", "fl", "fr", "b", "bl", "br"})
+        if self.model.stg2fuse_type is not None:
+            _validate_choices("model.stg2fuse_type", self.model.stg2fuse_type, {"basic"})

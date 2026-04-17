@@ -1,6 +1,10 @@
+import logging
+
 import torch
 import torch.nn.functional as F
 from torch import nn
+
+_LOG = logging.getLogger(__name__)
 
 
 class GeM(nn.Module):
@@ -175,8 +179,8 @@ if __name__ == "__main__":
     output_cosplace = cosplace(x)
     output_rrm = rrm(x)
 
-    print("output_gem.shape:", output_gem.shape)
-    print("output_mixvpr.shape:", output_mixvpr.shape)
-    print("output_convap.shape:", output_convap.shape)
-    print("output_cosplace.shape:", output_cosplace.shape)
-    print("output_rrm.shape:", output_rrm.shape)
+    _LOG.info("output_gem.shape: %s", output_gem.shape)
+    _LOG.info("output_mixvpr.shape: %s", output_mixvpr.shape)
+    _LOG.info("output_convap.shape: %s", output_convap.shape)
+    _LOG.info("output_cosplace.shape: %s", output_cosplace.shape)
+    _LOG.info("output_rrm.shape: %s", output_rrm.shape)

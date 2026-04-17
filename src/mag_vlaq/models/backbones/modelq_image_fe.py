@@ -15,7 +15,7 @@ class ImageFE(nn.Module):
 
         self.fe = torch.hub.load("facebookresearch/dinov2", "dinov2_vitl14")
         self.last_dim = 1024
-        self.target_blocks = [int(e) for e in self.args.dino_extract_blocks.split("_")]
+        self.target_blocks = [int(e) for e in self.args.dino_extract_blocks]
 
         dino_mode = getattr(self.args, "unfreeze_dino_mode", "frozen")
         if self.args.lrdino == 0.0:

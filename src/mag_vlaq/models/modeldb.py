@@ -29,7 +29,7 @@ class ModelDB(nn.Module):
         self.args = args
         # ---- database
         if mode == "db":
-            maptype = self.args.maptype.split("_")
+            maptype = self.args.maptype
             self.dbimage_fes = [ImageFE(fe_type="dinov2_vitl14", args=self.args) for _ in range(len(maptype))]
             self.dbimage_pools = [GeM() for _ in range(len(maptype))]
             # self.dbimage_mlp = [nn.Linear(e.last_dim, dim) for e in self.dbimage_fes] # after pool, change dim

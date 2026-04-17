@@ -13,6 +13,8 @@ from mag_vlaq.lightning.losses import MagVlaqLoss
 from mag_vlaq.lightning.models import build_models
 from mag_vlaq.lightning.optim import configure_mag_vlaq_optimizers
 
+_LOG = logging.getLogger(__name__)
+
 
 class MagVlaqModule(pl.LightningModule):
     def __init__(self, cfg):
@@ -197,5 +199,5 @@ class MagVlaqModule(pl.LightningModule):
             f"epoch = {self.best_r1r5r10ep[3]:d}"
         )
         if self.trainer.is_global_zero:
-            logging.info(now)
-            logging.info(best)
+            _LOG.info(now)
+            _LOG.info(best)

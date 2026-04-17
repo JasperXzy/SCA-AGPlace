@@ -4,6 +4,8 @@ import faiss
 import numpy as np
 import torch
 
+_LOG = logging.getLogger(__name__)
+
 
 def feature_store_length(test_ds, test_method):
     if test_method in {"nearest_crop", "maj_voting"}:
@@ -28,7 +30,7 @@ def compute_recall(cfg, queries_features, database_features, test_ds, test_metho
     faiss_index = faiss.IndexFlatL2(cfg.features_dim)
     faiss_index.add(database_features)
 
-    logging.debug("Calculating recalls")
+    _LOG.debug("Calculating recalls")
     distances, predictions = faiss_index.search(queries_features, max(cfg.recall_values))
 
     if test_method == "nearest_crop":

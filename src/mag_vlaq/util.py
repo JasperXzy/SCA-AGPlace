@@ -3,6 +3,8 @@ from collections import OrderedDict
 
 import torch
 
+_LOG = logging.getLogger(__name__)
+
 
 def get_flops(model, input_shape=(480, 640)):
     return None
@@ -24,5 +26,5 @@ def resume_model(args, model, strict=True):
         state_dict = checkpoint
     state_dict = _strip_module_prefix(state_dict)
     model.load_state_dict(state_dict, strict=strict)
-    logging.debug("Loaded model checkpoint: %s", args.resume)
+    _LOG.debug("Loaded model checkpoint: %s", args.resume)
     return model

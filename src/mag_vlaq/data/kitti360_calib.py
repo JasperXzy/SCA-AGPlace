@@ -17,14 +17,17 @@ import os
 import re
 
 import numpy as np
+import yaml
 from PIL import Image
+
+_LOG = logging.getLogger(__name__)
 
 
 def _read_variable(fid, name, M, N):
     """Read a named variable from a calibration file."""
     fid.seek(0)
-    for line in fid:
-        line = line.strip()
+    for raw_line in fid:
+        line = raw_line.strip()
         if line.startswith(name + ":"):
             data = line.split(":")[1].strip().split()
             return np.array([float(x) for x in data]).reshape(M, N)
@@ -33,8 +36,6 @@ def _read_variable(fid, name, M, N):
 
 def _read_yaml_file(filepath):
     """Read an OpenCV YAML file (KITTI-360 format) into a dict."""
-    import yaml
-
     with open(filepath) as f:
         content = f.read()
     # Make OpenCV YAML compatible with Python YAML parser
@@ -219,7 +220,7 @@ def get_calibration(dataroot):
         try:
             _calib_cache[dataroot] = load_calibration(calib_dir)
         except FileNotFoundError as e:
-            logging.warning(
+            _LOG.warning(
                 f"KITTI-360 calibration not found: {e}\n"
                 "RGB will be set to zeros. To enable color projection, "
                 "download calibration from https://www.cvlibs.net/datasets/kitti-360/download.php "

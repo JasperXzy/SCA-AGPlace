@@ -13,10 +13,12 @@ utonia_path = str(utonia_path)
 if utonia_path not in sys.path:
     sys.path.append(utonia_path)
 
-from utonia.model import PointTransformerV3
-from utonia.model import load as utonia_load
-from utonia.structure import Point
-from utonia.utils import offset2batch
+from utonia.model import PointTransformerV3  # noqa: E402
+from utonia.model import load as utonia_load  # noqa: E402
+from utonia.structure import Point  # noqa: E402
+from utonia.utils import offset2batch  # noqa: E402
+
+_LOG = logging.getLogger(__name__)
 
 
 class UtoniaFE(nn.Module):
@@ -39,8 +41,8 @@ class UtoniaFE(nn.Module):
         self.planes = planes
         pretrained_name = getattr(self.args, "utonia_pretrained", "none")
         freeze_mode = getattr(self.args, "unfreeze_utonia_mode", "frozen")
-        extract_stages = getattr(self.args, "utonia_extract_stages", "1_2_3")
-        self.target_stages = [int(s) for s in extract_stages.split("_")]
+        extract_stages = getattr(self.args, "utonia_extract_stages", [1, 2, 3])
+        self.target_stages = [int(s) for s in extract_stages]
 
         if pretrained_name != "none":
             # Load pretrained checkpoint to get architecture config
@@ -65,7 +67,7 @@ class UtoniaFE(nn.Module):
                 k: v for k, v in pretrained_state.items() if k in model_state and v.shape == model_state[k].shape
             }
             self.ptv3.load_state_dict(filtered_state, strict=False)
-            logging.info(
+            _LOG.info(
                 f"Utonia pretrained loaded. Loaded: {len(filtered_state)}/{len(pretrained_state)} keys, "
                 f"Skipped (shape mismatch or missing): {len(pretrained_state) - len(filtered_state)}"
             )
@@ -127,11 +129,11 @@ class UtoniaFE(nn.Module):
             if lrutonia == 0.0:
                 for param in self.ptv3.parameters():
                     param.requires_grad = False
-                logging.info("[Utonia] lrutonia=0 -> PTv3 fully frozen (no grad)")
+                _LOG.info("[Utonia] lrutonia=0 -> PTv3 fully frozen (no grad)")
 
             n_total = sum(p.numel() for p in self.ptv3.parameters())
             n_trainable = sum(p.numel() for p in self.ptv3.parameters() if p.requires_grad)
-            logging.info(
+            _LOG.info(
                 f"Utonia freeze_mode={freeze_mode}: {n_trainable}/{n_total} params trainable "
                 f"({100 * n_trainable / n_total:.1f}%)"
             )
@@ -163,7 +165,7 @@ class UtoniaFE(nn.Module):
             with torch.no_grad():
                 c = data_dict["coord"]
                 g = data_dict["grid_coord"]
-                logging.debug(
+                _LOG.debug(
                     f"[Utonia in] coord range=[{c.min().item():.2f},{c.max().item():.2f}] "
                     f"mean={c.mean().item():.2f} std={c.std().item():.2f}  "
                     f"grid range=[{g.min().item()},{g.max().item()}]  "
@@ -194,7 +196,7 @@ class UtoniaFE(nn.Module):
         # 3. Retrieve representations from pooled stages via pooling_parent chain
         stages = []
         curr_point = final_point
-        for i in range(5):
+        for _i in range(5):
             stages.append(curr_point)
             if "pooling_parent" in curr_point:
                 curr_point = curr_point.pop("pooling_parent")

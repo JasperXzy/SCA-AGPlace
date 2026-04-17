@@ -95,7 +95,9 @@ class GeM(nn.Module):
 class FFNFuse(nn.Module):
     def __init__(self, dim, stg2fuse_type):
         super().__init__()
-        self.stg2fuse_type = stg2fuse_type.split("_")
+        if isinstance(stg2fuse_type, str):
+            stg2fuse_type = [stg2fuse_type]
+        self.stg2fuse_type = stg2fuse_type or []
         self.ffns = nn.ModuleList()
         for e in self.stg2fuse_type:
             if e == "basic":

@@ -6,6 +6,18 @@ from mag_vlaq.models.blocks.diff_block import DiffBlock
 from mag_vlaq.models.layers.sparse_utils import sparse_global_avg_pool
 
 
+def _has_diff_type(args, name):
+    return any(item.split("@", 1)[0] == name for item in args.diff_type)
+
+
+def _stage_indexes(length, direction):
+    if direction == "forward":
+        return range(length)
+    if direction == "backward":
+        return range(length - 1, -1, -1)
+    raise NotImplementedError
+
+
 class FuseBlockToShallow(nn.Module):
     def __init__(self, dims=None, img_dims=None, vox_dims=None, bev_dims=None, args=None):
         if bev_dims is None:
@@ -50,7 +62,7 @@ class FuseBlockToShallow(nn.Module):
         imageveclist = [F.adaptive_avg_pool2d(e, output_size=1).flatten(1) for e in imagemaplist]
         bevveclist = [F.adaptive_avg_pool2d(e, output_size=1).flatten(1) for e in bevmaplist]
 
-        if "cde" in self.args.diff_type:
+        if _has_diff_type(self.args, "cde"):
             # ==== cde
             if self.args.diff_direction == "forward":
                 imageveclist = [self.updimsimg[i](imageveclist[i]) for i in range(len(imageveclist))]
@@ -65,11 +77,7 @@ class FuseBlockToShallow(nn.Module):
         else:
             # ==== deep to shallow
             fusevec = 0
-            for i in range(len(self.dims)):
-                if self.args.diff_direction == "forward":
-                    i = i
-                elif self.args.diff_direction == "backward":
-                    i = len(self.dims) - 1 - i
+            for i in _stage_indexes(len(self.dims), self.args.diff_direction):
                 imagevec = imageveclist[i]
                 bevvec = bevveclist[i]
                 block = self.blocks[i]
@@ -90,7 +98,7 @@ class FuseBlockToShallow(nn.Module):
         imageveclist = [F.adaptive_avg_pool2d(e, output_size=1).flatten(1) for e in imagemaplist]
         voxveclist = [sparse_global_avg_pool(e) for e in voxmaplist]
 
-        if "cde" in self.args.diff_type:
+        if _has_diff_type(self.args, "cde"):
             # ==== cde
             if self.args.diff_direction == "forward":
                 imageveclist = [self.updimsimg[i](imageveclist[i]) for i in range(len(imageveclist))]
@@ -106,11 +114,7 @@ class FuseBlockToShallow(nn.Module):
         else:
             # ==== deep to shallow
             fusevec = 0
-            for i in range(len(self.dims)):
-                if self.args.diff_direction == "forward":
-                    i = i
-                elif self.args.diff_direction == "backward":
-                    i = len(self.dims) - 1 - i
+            for i in _stage_indexes(len(self.dims), self.args.diff_direction):
                 imagevec = imageveclist[i]
                 voxvec = voxveclist[i]
                 block = self.blocks[i]

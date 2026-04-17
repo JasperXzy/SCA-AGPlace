@@ -21,7 +21,10 @@ except Exception:  # pragma: no cover - older Lightning versions
     DDPStrategy = None
 
 from mag_vlaq.config import Config
+from mag_vlaq.lightning.callbacks import TripletCacheRefreshCallback
 from mag_vlaq.lightning.logging_utils import setup_logging
+
+_LOG = logging.getLogger(__name__)
 
 
 def suppress_noisy_runtime_warnings() -> None:
@@ -136,8 +139,6 @@ def build_trainer_kwargs(cfg: Config, loops_num: int, logger_config: Any) -> dic
 
     callbacks = trainer_config.pop("callbacks", None) or []
     has_progress_bar = any(type(callback).__name__.endswith("ProgressBar") for callback in callbacks)
-    from mag_vlaq.lightning.callbacks import TripletCacheRefreshCallback
-
     callbacks.append(TripletCacheRefreshCallback(loops_num=loops_num))
     if trainer_config.get("enable_progress_bar", True) and not has_progress_bar:
         callbacks.append(pl.callbacks.RichProgressBar(leave=True, console_kwargs={"stderr": True}))
@@ -158,11 +159,11 @@ def setup_runtime_logging(cfg: Config) -> None:
 def log_startup(cfg: Config, trainer_config: dict[str, Any], loops_num: int) -> None:
     trainer_log_config = {key: value for key, value in trainer_config.items() if key not in {"callbacks", "logger"}}
     callback_names = ", ".join(type(callback).__name__ for callback in trainer_config["callbacks"])
-    logging.info("Config: %s", cfg.to_flat_dict())
-    logging.info("Lightning trainer config: %s", trainer_log_config)
-    logging.info("Lightning callbacks: %s", callback_names)
-    logging.info("Lightning logger: %s", _logger_names(trainer_config["logger"]))
-    logging.info("Cache loops per original epoch: %d", loops_num)
+    _LOG.info("Config: %s", cfg.to_flat_dict())
+    _LOG.info("Lightning trainer config: %s", trainer_log_config)
+    _LOG.info("Lightning callbacks: %s", callback_names)
+    _LOG.info("Lightning logger: %s", _logger_names(trainer_config["logger"]))
+    _LOG.info("Cache loops per original epoch: %d", loops_num)
 
 
 def _normalise_strategy(strategy: Any):
@@ -173,14 +174,18 @@ def _normalise_strategy(strategy: Any):
 
 def _get_litlogger_class():
     for module_name in ("lightning.pytorch.loggers", "pytorch_lightning.loggers"):
-        try:
-            module = importlib.import_module(module_name)
-            litlogger_cls = getattr(module, "LitLogger", None)
-            if litlogger_cls is not None:
-                return litlogger_cls
-        except Exception:
-            continue
+        litlogger_cls = _maybe_get_litlogger_class(module_name)
+        if litlogger_cls is not None:
+            return litlogger_cls
     return None
+
+
+def _maybe_get_litlogger_class(module_name: str):
+    try:
+        module = importlib.import_module(module_name)
+    except Exception:
+        return None
+    return getattr(module, "LitLogger", None)
 
 
 def _metadata_to_strings(metadata: Any) -> dict[str, str]:

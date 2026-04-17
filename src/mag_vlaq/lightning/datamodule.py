@@ -23,6 +23,8 @@ from mag_vlaq.data.nuscenes import (
     nuscenes_collate_fn_cache_q,
 )
 
+_LOG = logging.getLogger(__name__)
+
 
 def _worker_kwargs(cfg, num_workers):
     kwargs = {"num_workers": num_workers}
@@ -71,8 +73,8 @@ class MagVlaqDataModule(pl.LightningDataModule):
             (max(1, self.cfg.cache_refresh_rate), self.cfg.negs_num_per_query + 2),
             dtype=torch.long,
         )
-        logging.info("Train query set: %s", self.triplets_ds)
-        logging.info("Test set: %s", self.test_ds)
+        _LOG.info("Train query set: %s", self.triplets_ds)
+        _LOG.info("Test set: %s", self.test_ds)
 
     def train_dataloader(self):
         if self.triplets_ds is None:

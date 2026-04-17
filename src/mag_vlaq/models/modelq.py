@@ -24,6 +24,10 @@ class MLP(nn.Module):
         return self.seq(x)
 
 
+def _scalar_parameter(value, requires_grad):
+    return nn.Parameter(torch.tensor(value, dtype=torch.float32), requires_grad=requires_grad)
+
+
 class ModelQ(nn.Module):
     def __init__(self, drop=None, args=None):
         super().__init__()
@@ -34,7 +38,7 @@ class ModelQ(nn.Module):
         # ---- query
         self.image_fe = ImageFE(fe_type="dinov2_vitl14", args=self.args)
         self.image_pool = GeM()
-        planes = [int(x) for x in self.args.mm_voxfe_planes.split("_")]
+        planes = [int(x) for x in self.args.mm_voxfe_planes]
         self.planes = planes
         self.vox_fe = UtoniaFE(out_channels=planes[-1], planes=planes, args=self.args)
         self.vox_pool = MinkGeM()
@@ -47,7 +51,7 @@ class ModelQ(nn.Module):
             dims=[self.args.mm_stg2fuse_dim for _ in range(len(planes))],
             img_dims=img_dims,
             vox_dims=planes,
-            bev_dims=[int(e) for e in self.args.mm_bevfe_planes.split("_")],
+            bev_dims=[int(e) for e in self.args.mm_bevfe_planes],
             args=self.args,
         )
         self.stg2fuseblock = Stage2FuseBlockAdd(
@@ -59,40 +63,17 @@ class ModelQ(nn.Module):
         )
         self.stg2fusefc = nn.Linear(self.args.mm_stg2fuse_dim, self.args.mm_stg2fuse_dim)
 
-        self.image_weight = nn.Parameter(
-            torch.tensor(self.args.image_weight, dtype=torch.float32), requires_grad=self.args.image_learnweight
-        )
-        self.vox_weight = nn.Parameter(
-            torch.tensor(self.args.vox_weight, dtype=torch.float32), requires_grad=self.args.vox_learnweight
-        )
-        self.shallow_weight = nn.Parameter(
-            torch.tensor(self.args.shallow_weight, dtype=torch.float32), requires_grad=self.args.shallow_learnweight
-        )
+        self.image_weight = _scalar_parameter(self.args.image_weight, self.args.image_learnweight)
+        self.vox_weight = _scalar_parameter(self.args.vox_weight, self.args.vox_learnweight)
+        self.shallow_weight = _scalar_parameter(self.args.shallow_weight, self.args.shallow_learnweight)
 
-        self.imageorg_weight = nn.Parameter(
-            torch.tensor(self.args.imagevoxorg_weight, dtype=torch.float32),
-            requires_grad=self.args.imagevoxorg_learnweight,
-        )
-        self.voxorg_weight = nn.Parameter(
-            torch.tensor(self.args.imagevoxorg_weight, dtype=torch.float32),
-            requires_grad=self.args.imagevoxorg_learnweight,
-        )
-        self.shalloworg_weight = nn.Parameter(
-            torch.tensor(self.args.shalloworg_weight, dtype=torch.float32),
-            requires_grad=self.args.shalloworg_learnweight,
-        )
+        self.imageorg_weight = _scalar_parameter(self.args.imagevoxorg_weight, self.args.imagevoxorg_learnweight)
+        self.voxorg_weight = _scalar_parameter(self.args.imagevoxorg_weight, self.args.imagevoxorg_learnweight)
+        self.shalloworg_weight = _scalar_parameter(self.args.shalloworg_weight, self.args.shalloworg_learnweight)
 
-        self.stg2image_weight = nn.Parameter(
-            torch.tensor(self.args.stg2imagevox_weight, dtype=torch.float32),
-            requires_grad=self.args.stg2imagevox_learnweight,
-        )
-        self.stg2vox_weight = nn.Parameter(
-            torch.tensor(self.args.stg2imagevox_weight, dtype=torch.float32),
-            requires_grad=self.args.stg2imagevox_learnweight,
-        )
-        self.stg2fuse_weight = nn.Parameter(
-            torch.tensor(self.args.stg2fuse_weight, dtype=torch.float32), requires_grad=self.args.stg2fuse_learnweight
-        )
+        self.stg2image_weight = _scalar_parameter(self.args.stg2imagevox_weight, self.args.stg2imagevox_learnweight)
+        self.stg2vox_weight = _scalar_parameter(self.args.stg2imagevox_weight, self.args.stg2imagevox_learnweight)
+        self.stg2fuse_weight = _scalar_parameter(self.args.stg2fuse_weight, self.args.stg2fuse_learnweight)
 
         self.image_proj = MLP(self.args.mm_imgfe_dim, self.args.features_dim)
 

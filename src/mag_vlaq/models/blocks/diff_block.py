@@ -12,10 +12,12 @@ class DiffBlock(nn.Module):
         self.blocks = nn.ModuleList()
 
         diff_type = self.args.diff_type
+        if isinstance(diff_type, str):
+            diff_type = [diff_type]
 
-        for e in diff_type.split("_"):
-            e, act = e.split("@")
-            if e == "fcode":
+        for diff_spec in diff_type:
+            block_name, act = diff_spec.split("@")
+            if block_name == "fcode":
                 self.blocks.append(FCODE(dim, act, args=self.args))
             else:
                 raise NotImplementedError

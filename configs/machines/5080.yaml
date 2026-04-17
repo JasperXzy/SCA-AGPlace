@@ -1,0 +1,3 @@
+paths:
+  kitti360: /home/jasperxzy/Datasets/cmvpr/kitti360/KITTI-360
+  nuscenes: /home/jasperxzy/Datasets/radar/nuscenes

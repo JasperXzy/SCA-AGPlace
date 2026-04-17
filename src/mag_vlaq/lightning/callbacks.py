@@ -7,8 +7,24 @@ try:
 except ImportError as exc:  # pragma: no cover - depends on environment
     raise ImportError("PyTorch Lightning is required for callbacks.") from exc
 
+try:
+    from rich.progress import (
+        BarColumn,
+        MofNCompleteColumn,
+        Progress,
+        TaskProgressColumn,
+        TextColumn,
+        TimeElapsedColumn,
+        TimeRemainingColumn,
+    )
+except ImportError:  # pragma: no cover - optional rich dependency
+    BarColumn = MofNCompleteColumn = Progress = TaskProgressColumn = TextColumn = TimeElapsedColumn = None
+    TimeRemainingColumn = None
+
 from mag_vlaq.lightning.logging_utils import get_rich_console
 from mag_vlaq.lightning.triplet_cache import TripletCacheBuilder
+
+_LOG = logging.getLogger(__name__)
 
 
 class _TripletProgress:
@@ -28,18 +44,8 @@ class _TripletProgress:
         if self._progress is not None:
             return self
         try:
-            from rich.progress import (
-                BarColumn,
-                MofNCompleteColumn,
-                Progress,
-                TaskProgressColumn,
-                TextColumn,
-                TimeElapsedColumn,
-                TimeRemainingColumn,
-            )
-
             console = get_rich_console()
-            if console is None or not console.is_terminal:
+            if Progress is None or console is None or not console.is_terminal:
                 return self
 
             self._progress = Progress(
@@ -66,11 +72,7 @@ class _TripletProgress:
             if self._summaries and console.is_terminal:
                 width = max(len(summary["label"]) for summary in self._summaries)
                 for summary in self._summaries:
-                    console.print(
-                        self._format_summary(summary, width, console.width),
-                        highlight=False,
-                        markup=False,
-                    )
+                    _LOG.info("%s", self._format_summary(summary, width, console.width))
             if self._owns_progress:
                 self._progress = None
         return False
@@ -148,7 +150,7 @@ class _TripletProgress:
                 "next_report": self.log_every,
                 "t0": time.time(),
             }
-            logging.info("%s started%s", label, f" ({total} steps)" if total else "")
+            _LOG.info("%s started%s", label, f" ({total} steps)" if total else "")
         elif event == "advance":
             state = self._fallback.get(label)
             if not state:
@@ -160,7 +162,7 @@ class _TripletProgress:
             percent = min(100, int(state["current"] * 100 / total))
             if percent >= state["next_report"] and state["current"] < total:
                 elapsed = time.time() - state["t0"]
-                logging.info(
+                _LOG.info(
                     "%s %d%% (%d/%d, %.1fs)",
                     label,
                     percent,
@@ -174,7 +176,7 @@ class _TripletProgress:
             state = self._fallback.pop(label, None)
             if state and state["total"]:
                 elapsed = time.time() - state["t0"]
-                logging.info(
+                _LOG.info(
                     "%s done (%d/%d, %.1fs)",
                     label,
                     state["current"],
@@ -230,7 +232,7 @@ class TripletCacheRefreshCallback(pl.Callback):
         t0 = time.time()
 
         with _paused_lightning_progress(trainer, resume=True):
-            logging.info(
+            _LOG.info(
                 "compute triplets: lightning_epoch=%d real_epoch=%d loop=%d/%d reason=%s",
                 epoch,
                 real_epoch,
@@ -254,4 +256,4 @@ class TripletCacheRefreshCallback(pl.Callback):
             finally:
                 dm.triplets_ds.is_inference = False
 
-            logging.info("triplet cache ready in %.2fs", time.time() - t0)
+            _LOG.info("triplet cache ready in %.2fs", time.time() - t0)
