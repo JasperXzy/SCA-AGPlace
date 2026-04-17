@@ -43,7 +43,7 @@ class ModelQ(nn.Module):
         self.vox_fe = UtoniaFE(out_channels=planes[-1], planes=planes, args=self.args)
         self.vox_pool = MinkGeM()
 
-        # DINOv2 returns one feature map; repeat it to match Utonia's multi-stage fusion inputs.
+        # DINOv2 returns one feature map per configured extraction block.
         img_dims = [self.args.mm_imgfe_dim for _ in range(len(planes))]
 
         # Ensure img_dims are correctly passed to FuseBlockToShallow
@@ -92,7 +92,6 @@ class ModelQ(nn.Module):
         output = []
         if "image" in self.args.output_type:
             imagefeatmap, imagefeatmaplist = self.image_fe(image)
-            imagefeatmaplist = [imagefeatmap for _ in range(len(self.planes))]
 
             imagefeatvec = self.image_pool(imagefeatmap)
             imagefeatvec = imagefeatvec.flatten(1)
