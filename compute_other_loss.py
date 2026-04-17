@@ -107,11 +107,17 @@ def compute_other_loss(feats_ground, feats_aerial, data_dict, positive_thd=10, n
 
 
 if __name__ == '__main__':
-    from tools.options import parse_arguments
+    from pathlib import Path
+    import sys
+
+    src_path = Path(__file__).resolve().parent / "src"
+    if str(src_path) not in sys.path:
+        sys.path.insert(0, str(src_path))
+    from sca.config import Config
 
     feats_ground = torch.load('feats_ground.pth')
     feats_aerial = torch.load('feats_aerial.pth')
     data_dict = torch.load('data_dict.pth')
 
-    args = parse_arguments()
+    args, _ = Config.from_argv()
     loss = compute_other_loss(feats_ground, feats_aerial, data_dict, args=args)

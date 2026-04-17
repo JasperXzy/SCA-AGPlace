@@ -4,7 +4,7 @@ import sys
 
 def _setup_paths():
     here = Path(__file__).resolve().parent
-    candidates = [here, here.parent]
+    candidates = [here, here / "src", here.parent]
     for path in reversed(candidates):
         path_str = str(path)
         if path_str not in sys.path:

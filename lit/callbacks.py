@@ -279,8 +279,8 @@ class TripletCacheRefreshCallback(pl.Callback):
         dm = trainer.datamodule
         if getattr(dm, "triplets_ds", None) is None:
             dm.setup("fit")
-        args = pl_module.args
-        args.device = str(pl_module.device)
+        cfg = pl_module.cfg
+        cfg.device = str(pl_module.device)
         real_epoch = epoch // self.loops_num
         loop = epoch % self.loops_num
         t0 = time.time()
@@ -295,8 +295,8 @@ class TripletCacheRefreshCallback(pl.Callback):
                 reason,
             )
 
-            old_disable_dataset_tqdm = getattr(args, "disable_dataset_tqdm", False)
-            args.disable_dataset_tqdm = True
+            old_disable_dataset_tqdm = getattr(cfg, "disable_dataset_tqdm", False)
+            cfg.disable_dataset_tqdm = True
             dm.triplets_ds.is_inference = True
             setter = None
             try:
@@ -305,12 +305,12 @@ class TripletCacheRefreshCallback(pl.Callback):
                         dm.triplets_ds,
                         progress if trainer.is_global_zero else None,
                     )
-                    dm.triplets_ds.compute_triplets(args, pl_module.model, pl_module.modelq)
+                    dm.triplets_ds.compute_triplets(cfg, pl_module.model, pl_module.modelq)
             finally:
                 if setter is not None:
                     setter(None)
                 dm.triplets_ds.is_inference = False
-                args.disable_dataset_tqdm = old_disable_dataset_tqdm
+                cfg.disable_dataset_tqdm = old_disable_dataset_tqdm
 
             if trainer.world_size > 1:
                 _barrier(trainer.strategy, "triplet_cache_computed")
@@ -334,8 +334,8 @@ class RetrievalEvalCallback(pl.Callback):
     def on_validation_epoch_end(self, trainer, pl_module):
         import test
 
-        args = pl_module.args
-        args.device = str(pl_module.device)
+        cfg = pl_module.cfg
+        cfg.device = str(pl_module.device)
 
         recalls_tensor = torch.zeros(3, device=pl_module.device, dtype=torch.float32)
         with _paused_lightning_progress(trainer, resume=_has_more_epochs(trainer)):
@@ -345,11 +345,11 @@ class RetrievalEvalCallback(pl.Callback):
                     "retrieval eval started: database=%d queries=%d batch_size=%d",
                     trainer.datamodule.test_ds.database_num,
                     trainer.datamodule.test_ds.queries_num,
-                    args.infer_batch_size,
+                    cfg.infer_batch_size,
                 )
-            old_disable_dataset_tqdm = getattr(args, "disable_dataset_tqdm", False)
+            old_disable_dataset_tqdm = getattr(cfg, "disable_dataset_tqdm", False)
             old_test_progress_callback = getattr(test, "_TEST_PROGRESS_CALLBACK", None)
-            args.disable_dataset_tqdm = True
+            cfg.disable_dataset_tqdm = True
             try:
                 with _TripletProgress(
                     enabled=trainer.is_global_zero,
@@ -358,10 +358,10 @@ class RetrievalEvalCallback(pl.Callback):
                     if hasattr(test, "set_progress_callback"):
                         test.set_progress_callback(progress if trainer.is_global_zero else None)
                     recalls, _, _ = test.test(
-                        args,
+                        cfg,
                         trainer.datamodule.test_ds,
                         pl_module.model,
-                        test_method=args.test_method,
+                        test_method=cfg.test_method,
                         modelq=pl_module.modelq,
                         rank=trainer.global_rank,
                         world_size=trainer.world_size,
@@ -369,7 +369,7 @@ class RetrievalEvalCallback(pl.Callback):
             finally:
                 if hasattr(test, "set_progress_callback"):
                     test.set_progress_callback(old_test_progress_callback)
-                args.disable_dataset_tqdm = old_disable_dataset_tqdm
+                cfg.disable_dataset_tqdm = old_disable_dataset_tqdm
 
         if trainer.is_global_zero:
             recalls_tensor = torch.tensor(
@@ -408,5 +408,5 @@ class RetrievalEvalCallback(pl.Callback):
             commons = _load_lightning_commons()
             logging.info(now)
             logging.info(best)
-            commons.logging_info(args, now)
-            commons.logging_info(args, best)
+            commons.logging_info(cfg, now)
+            commons.logging_info(cfg, best)

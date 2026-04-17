@@ -6,11 +6,11 @@ from lit.losses.retrieval import compute_triplet_loss
 
 
 class SCALoss(nn.Module):
-    def __init__(self, args):
+    def __init__(self, cfg):
         super().__init__()
-        self.args = args
+        self.cfg = cfg
         self.criterion_triplet = nn.TripletMarginLoss(
-            margin=args.margin,
+            margin=cfg.margin,
             p=2,
             reduction="sum",
         )
@@ -20,22 +20,22 @@ class SCALoss(nn.Module):
             feats_ground,
             feats_aerial,
             data_dict,
-            positive_thd=self.args.train_positives_dist_threshold,
-            negative_thd=self.args.val_positive_dist_threshold,
-            args=self.args,
+            positive_thd=self.cfg.train_positives_dist_threshold,
+            negative_thd=self.cfg.val_positive_dist_threshold,
+            args=self.cfg,
         )
 
         feats_ground_embed = feats_ground["embedding"].unsqueeze(1)
         feats_aerial_embed = feats_aerial["embedding"]
         features = torch.cat((feats_ground_embed, feats_aerial_embed), dim=1)
-        features = features.view(-1, self.args.features_dim)
+        features = features.view(-1, self.cfg.features_dim)
         triplet_loss = compute_triplet_loss(
-            self.args,
+            self.cfg,
             self.criterion_triplet,
             triplets_local_indexes,
             features,
         )
-        total_loss = other_loss + triplet_loss * self.args.tripletloss_weight
+        total_loss = other_loss + triplet_loss * self.cfg.tripletloss_weight
 
         return {
             "total": total_loss,

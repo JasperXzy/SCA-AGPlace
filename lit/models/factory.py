@@ -2,7 +2,7 @@ from models_baseline.dbvanilla2d import DBVanilla2D
 from network_mm.mm import MM
 
 
-def build_models(args):
-    db_model = DBVanilla2D(mode="db", dim=args.features_dim, args=args)
-    query_model = MM(args=args)
+def build_models(cfg):
+    db_model = DBVanilla2D(mode="db", dim=cfg.features_dim, args=cfg)
+    query_model = MM(args=cfg)
     return db_model, query_model

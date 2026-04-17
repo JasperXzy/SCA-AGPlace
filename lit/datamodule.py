@@ -29,9 +29,9 @@ class _ValidationSignalDataset(Dataset):
 
 
 class SCADataModule(pl.LightningDataModule):
-    def __init__(self, args):
+    def __init__(self, cfg):
         super().__init__()
-        self.args = args
+        self.cfg = cfg
         self.triplets_ds = None
         self.test_ds = None
         self.collate_fn = None
@@ -40,35 +40,35 @@ class SCADataModule(pl.LightningDataModule):
         if self.triplets_ds is not None and self.test_ds is not None:
             return
 
-        if self.args.dataset == "kitti360":
+        if self.cfg.dataset == "kitti360":
             self.triplets_ds = KITTI360TripletsDataset(
-                self.args,
-                self.args.datasets_folder,
-                self.args.dataset_name,
+                self.cfg,
+                self.cfg.datasets_folder,
+                self.cfg.dataset_name,
                 "train",
-                self.args.negs_num_per_query,
+                self.cfg.negs_num_per_query,
             )
             self.test_ds = KITTI360BaseDataset(
-                self.args, self.args.datasets_folder, self.args.dataset_name, "test"
+                self.cfg, self.cfg.datasets_folder, self.cfg.dataset_name, "test"
             )
             self.collate_fn = kitti360_collate_fn
-        elif self.args.dataset == "nuscenes":
+        elif self.cfg.dataset == "nuscenes":
             self.triplets_ds = NuScenesTripletsDataset(
-                self.args,
-                self.args.datasets_folder,
-                self.args.dataset_name,
+                self.cfg,
+                self.cfg.datasets_folder,
+                self.cfg.dataset_name,
                 "train",
-                self.args.negs_num_per_query,
+                self.cfg.negs_num_per_query,
             )
             self.test_ds = NuScenesBaseDataset(
-                self.args, self.args.datasets_folder, self.args.dataset_name, "test"
+                self.cfg, self.cfg.datasets_folder, self.cfg.dataset_name, "test"
             )
             self.collate_fn = nuscenes_collate_fn
         else:
-            raise ValueError(f"Unsupported dataset: {self.args.dataset}")
+            raise ValueError(f"Unsupported dataset: {self.cfg.dataset}")
 
         self.triplets_ds.triplets_global_indexes = torch.zeros(
-            (max(1, self.args.cache_refresh_rate), self.args.negs_num_per_query + 2),
+            (max(1, self.cfg.cache_refresh_rate), self.cfg.negs_num_per_query + 2),
             dtype=torch.long,
         )
         logging.info("Train query set: %s", self.triplets_ds)
@@ -80,10 +80,10 @@ class SCADataModule(pl.LightningDataModule):
         self.triplets_ds.is_inference = False
         return DataLoader(
             self.triplets_ds,
-            batch_size=self.args.train_batch_size,
-            num_workers=self.args.num_workers,
+            batch_size=self.cfg.train_batch_size,
+            num_workers=self.cfg.num_workers,
             collate_fn=self.collate_fn,
-            pin_memory=str(self.args.device).startswith("cuda"),
+            pin_memory=str(self.cfg.device).startswith("cuda"),
             drop_last=True,
         )
 

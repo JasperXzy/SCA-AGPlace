@@ -1,8 +1,8 @@
-def compute_triplet_loss(args, criterion_triplet, triplets_local_indexes, features):
+def compute_triplet_loss(cfg, criterion_triplet, triplets_local_indexes, features):
     loss_triplet = features.new_tensor(0.0)
-    local_batch = triplets_local_indexes.shape[0] // args.negs_num_per_query
+    local_batch = triplets_local_indexes.shape[0] // cfg.negs_num_per_query
     triplets_local_indexes = triplets_local_indexes.view(
-        local_batch, args.negs_num_per_query, 3
+        local_batch, cfg.negs_num_per_query, 3
     ).transpose(1, 0)
 
     for triplets in triplets_local_indexes:
@@ -13,4 +13,4 @@ def compute_triplet_loss(args, criterion_triplet, triplets_local_indexes, featur
             features[negatives_indexes],
         )
 
-    return loss_triplet / (local_batch * args.negs_num_per_query)
+    return loss_triplet / (local_batch * cfg.negs_num_per_query)

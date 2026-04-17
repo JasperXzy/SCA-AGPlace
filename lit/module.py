@@ -9,12 +9,12 @@ from lit.optim import configure_sca_optimizers
 
 
 class SCAModule(pl.LightningModule):
-    def __init__(self, args):
+    def __init__(self, cfg):
         super().__init__()
-        self.args = args
-        self.save_hyperparameters(vars(args))
-        self.model, self.modelq = build_models(args)
-        self.loss_fn = SCALoss(args)
+        self.cfg = cfg
+        self.save_hyperparameters(cfg.to_dict())
+        self.model, self.modelq = build_models(cfg)
+        self.loss_fn = SCALoss(cfg)
         self.automatic_optimization = False
 
     def forward(self, data_dict):
@@ -25,7 +25,7 @@ class SCAModule(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         data_dict, triplets_local_indexes, _ = batch
         opt_db, opt_q = self.optimizers()
-        local_batch_size = triplets_local_indexes.shape[0] // self.args.negs_num_per_query
+        local_batch_size = triplets_local_indexes.shape[0] // self.cfg.negs_num_per_query
 
         feats_ground, feats_aerial = self(data_dict)
         losses = self.loss_fn(
@@ -62,7 +62,7 @@ class SCAModule(pl.LightningModule):
         return None
 
     def configure_optimizers(self):
-        return configure_sca_optimizers(self.model, self.modelq, self.args)
+        return configure_sca_optimizers(self.model, self.modelq, self.cfg)
 
     def _clip_if_configured(self, optimizer):
         clip_val = getattr(self.trainer, "gradient_clip_val", None)
