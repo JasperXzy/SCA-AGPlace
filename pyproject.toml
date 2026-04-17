@@ -3,13 +3,13 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sca-agplace"
+name = "mag-vlaq"
 version = "0.1.0"
-description = "Lightning training package for SCA-AGPlace"
+description = "Lightning training package for MAG-VLAQ"
 requires-python = ">=3.10"
 
 [project.scripts]
-sca-train = "sca.lightning.cli:main"
+mag-vlaq-train = "mag_vlaq.lightning.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -1,6 +1,6 @@
-# SCA-AGPlace
+# MAG-VLAQ
 
-SCA-AGPlace is now packaged as a `src/sca` Python project with a PyTorch
+MAG-VLAQ is now packaged as a `src/mag_vlaq` Python project with a PyTorch
 Lightning training entrypoint. The legacy isolated `lightning/` layout and
 YAML-to-argparse bridge have been removed.
 
@@ -12,7 +12,7 @@ From the repository root:
 pip install -e .
 ```
 
-This installs the `sca` package and the `sca-train` console command. The root
+This installs the `mag_vlaq` package and the `mag-vlaq-train` console command. The root
 `train.py` entrypoint also works without installation because it adds `src/` to
 `sys.path`.
 
@@ -31,7 +31,7 @@ python train.py fit \
 Installed entrypoint:
 
 ```bash
-sca-train fit \
+mag-vlaq-train fit \
   --config configs/base.yaml \
   --config configs/kitti360.yaml \
   --config configs/exp/mm_dbvanilla2d.yaml \
@@ -95,11 +95,11 @@ The old `results.txt` and `results/{exp_name}.txt` outputs have been removed.
 ## Layout
 
 ```text
-SCA-AGPlace/
+MAG-VLAQ/
 ├── pyproject.toml
 ├── train.py
 ├── configs/
-├── src/sca/
+├── src/mag_vlaq/
 │   ├── config.py
 │   ├── data/
 │   ├── losses/
@@ -110,13 +110,13 @@ SCA-AGPlace/
 
 Important modules:
 
-- `src/sca/config.py`: structured config loaded from layered YAML and CLI
+- `src/mag_vlaq/config.py`: structured config loaded from layered YAML and CLI
   overrides.
-- `src/sca/lightning/module.py`: `SCAModule` training, validation, and predict
+- `src/mag_vlaq/lightning/module.py`: `MagVlaqModule` training, validation, and predict
   steps.
-- `src/sca/lightning/datamodule.py`: train and validation dataloaders.
-- `src/sca/lightning/triplet_cache.py`: triplet cache refresh and mining.
-- `src/sca/lightning/optim.py`: single Adam optimizer with DB/query param
+- `src/mag_vlaq/lightning/datamodule.py`: train and validation dataloaders.
+- `src/mag_vlaq/lightning/triplet_cache.py`: triplet cache refresh and mining.
+- `src/mag_vlaq/lightning/optim.py`: single Adam optimizer with DB/query param
   groups.
 
 ## Checks
@@ -125,6 +125,6 @@ Useful local checks after refactors:
 
 ```bash
 python -m compileall src train.py
-PYTHONPATH=src python -c "import sca.lightning.cli"
+PYTHONPATH=src python -c "import mag_vlaq.lightning.cli"
 python -m pip install -e . --no-deps --dry-run --no-build-isolation
 ```

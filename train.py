@@ -13,7 +13,7 @@ def _setup_paths():
 
 _setup_paths()
 
-from sca.lightning.cli import main as cli_main
+from mag_vlaq.lightning.cli import main as cli_main
 
 
 if __name__ == "__main__":
