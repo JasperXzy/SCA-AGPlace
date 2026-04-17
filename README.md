@@ -1,52 +1,130 @@
-# Lightning Migration
+# SCA-AGPlace
 
-This directory contains the isolated PyTorch Lightning migration. It does not
-modify the original training code. After validation, copy it over the project
-root with:
+SCA-AGPlace is now packaged as a `src/sca` Python project with a PyTorch
+Lightning training entrypoint. The legacy isolated `lightning/` layout and
+YAML-to-argparse bridge have been removed.
+
+## Install
+
+From the repository root:
 
 ```bash
-cp -r lightning/* .
+pip install -e .
 ```
 
-Required runtime packages are the original project dependencies plus
-`pytorch-lightning` and `PyYAML`.
+This installs the `sca` package and the `sca-train` console command. The root
+`train.py` entrypoint also works without installation because it adds `src/` to
+`sys.path`.
 
-Run a single-GPU experiment from the current isolated layout:
+## Train
+
+Single GPU:
 
 ```bash
-python lightning/train.py fit \
-  --config lightning/configs/base.yaml \
-  --config lightning/configs/kitti360.yaml \
-  --config lightning/configs/exp/mm_dbvanilla2d.yaml \
-  --cuda 0
+python train.py fit \
+  --config configs/base.yaml \
+  --config configs/kitti360.yaml \
+  --config configs/exp/mm_dbvanilla2d.yaml \
+  --trainer.devices 1
 ```
 
-Run DDP:
+Installed entrypoint:
 
 ```bash
-torchrun --nproc_per_node=4 lightning/train.py fit \
-  --config lightning/configs/base.yaml \
-  --config lightning/configs/kitti360.yaml \
-  --config lightning/configs/exp/mm_dbvanilla2d.yaml \
+sca-train fit \
+  --config configs/base.yaml \
+  --config configs/kitti360.yaml \
+  --config configs/exp/mm_dbvanilla2d.yaml \
+  --trainer.devices 1
+```
+
+DDP:
+
+```bash
+torchrun --nproc_per_node=4 train.py fit \
+  --config configs/base.yaml \
+  --config configs/kitti360.yaml \
+  --config configs/exp/mm_dbvanilla2d.yaml \
   --trainer.strategy ddp_find_unused_parameters_true
 ```
 
-Resume a Lightning checkpoint:
+Resume:
 
 ```bash
-python lightning/train.py fit \
-  --config lightning/configs/base.yaml \
-  --config lightning/configs/kitti360.yaml \
-  --config lightning/configs/exp/mm_dbvanilla2d.yaml \
+python train.py fit \
+  --config configs/base.yaml \
+  --config configs/kitti360.yaml \
+  --config configs/exp/mm_dbvanilla2d.yaml \
   --ckpt_path logs/<exp>/checkpoints/last.ckpt
+```
+
+Small smoke run:
+
+```bash
+python train.py fit \
+  --config configs/base.yaml \
+  --config configs/kitti360.yaml \
+  --config configs/exp/mm_dbvanilla2d.yaml \
+  --data.epochs_num 1 \
+  --data.queries_per_epoch 400 \
+  --data.cache_refresh_rate 400 \
+  --data.neg_samples_num 400 \
+  --data.infer_batch_size 4 \
+  --data.num_workers 4 \
+  --data.cache_num_workers 0 \
+  --trainer.devices 1
 ```
 
 `epochs_num` and `queries_per_epoch/cache_refresh_rate` keep the original
 semantics. The entrypoint derives Lightning `max_epochs` as
-`epochs_num * ceil(queries_per_epoch / cache_refresh_rate)` and derives
-`check_val_every_n_epoch` as the cache loop count unless these trainer values
-are explicitly set in YAML or on the command line.
+`epochs_num * ceil(queries_per_epoch / cache_refresh_rate)` and sets validation
+to run once per original epoch unless the trainer config explicitly overrides
+those values.
 
-The entrypoint first converts YAML into the legacy `tools/options.py` argv
-format before importing datasets and networks. This is required because the
-existing business modules parse and cache options at import time.
+## Logging
+
+Metrics are logged through Lightning loggers:
+
+- CSVLogger is enabled by default and writes under `save_dir/lightning_logs`.
+- LitLogger is optional. Enable it with `--logging.litlogger.enabled true` or in
+  YAML.
+- Runtime logs still go to `info.log` and `debug.log` under `save_dir`.
+
+The old `results.txt` and `results/{exp_name}.txt` outputs have been removed.
+
+## Layout
+
+```text
+SCA-AGPlace/
+├── pyproject.toml
+├── train.py
+├── configs/
+├── src/sca/
+│   ├── config.py
+│   ├── data/
+│   ├── losses/
+│   ├── models/
+│   └── lightning/
+└── docs/
+```
+
+Important modules:
+
+- `src/sca/config.py`: structured config loaded from layered YAML and CLI
+  overrides.
+- `src/sca/lightning/module.py`: `SCAModule` training, validation, and predict
+  steps.
+- `src/sca/lightning/datamodule.py`: train and validation dataloaders.
+- `src/sca/lightning/triplet_cache.py`: triplet cache refresh and mining.
+- `src/sca/lightning/optim.py`: single Adam optimizer with DB/query param
+  groups.
+
+## Checks
+
+Useful local checks after refactors:
+
+```bash
+python -m compileall src train.py
+PYTHONPATH=src python -c "import sca.lightning.cli"
+python -m pip install -e . --no-deps --dry-run --no-build-isolation
+```
