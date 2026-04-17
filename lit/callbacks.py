@@ -10,7 +10,7 @@ try:
 except ImportError as exc:  # pragma: no cover - depends on environment
     raise ImportError("PyTorch Lightning is required for callbacks.") from exc
 
-from lit.ddp_utils import _barrier, broadcast_triplets
+from lit.triplet_cache import TripletCacheBuilder
 
 
 class _TripletProgress:
@@ -186,15 +186,6 @@ class _TripletProgress:
                 )
 
 
-def _set_dataset_progress_callback(dataset, callback):
-    module = sys.modules.get(dataset.__class__.__module__)
-    setter = getattr(module, "set_progress_callback", None) if module is not None else None
-    if setter is None:
-        return None
-    setter(callback)
-    return setter
-
-
 def _load_lightning_commons():
     module_name = "_sca_lightning_commons"
     if module_name in sys.modules:
@@ -271,31 +262,19 @@ class TripletCacheRefreshCallback(pl.Callback):
                 reason,
             )
 
-            old_disable_dataset_tqdm = getattr(cfg, "disable_dataset_tqdm", False)
-            cfg.disable_dataset_tqdm = True
             dm.triplets_ds.is_inference = True
-            setter = None
             try:
                 with _TripletProgress(enabled=trainer.is_global_zero) as progress:
-                    setter = _set_dataset_progress_callback(
+                    builder = TripletCacheBuilder(
+                        cfg,
+                        trainer,
+                        pl_module,
                         dm.triplets_ds,
-                        progress if trainer.is_global_zero else None,
                     )
-                    dm.triplets_ds.compute_triplets(cfg, pl_module.model, pl_module.modelq)
+                    dm.triplets_ds.triplets_global_indexes = builder.refresh(
+                        progress if trainer.is_global_zero else None
+                    )
             finally:
-                if setter is not None:
-                    setter(None)
                 dm.triplets_ds.is_inference = False
-                cfg.disable_dataset_tqdm = old_disable_dataset_tqdm
-
-            if trainer.world_size > 1:
-                _barrier(trainer.strategy, "triplet_cache_computed")
-                broadcast_triplets(
-                    dm.triplets_ds,
-                    pl_module.device,
-                    trainer.strategy,
-                    trainer.world_size,
-                    trainer.global_rank,
-                )
 
             logging.info("triplet cache ready in %.2fs", time.time() - t0)

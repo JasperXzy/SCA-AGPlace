@@ -91,6 +91,22 @@ class SCAModule(pl.LightningModule):
         self._val_q_outputs.append((indices.detach(), features.detach()))
         return {"split": "q", "indices": indices.detach(), "features": features.detach()}
 
+    def predict_step(self, batch, batch_idx, dataloader_idx=0):
+        data_dict, indices = batch
+        data_dict = self._move_tensor_values(data_dict)
+        indices = indices.to(device=self.device, dtype=torch.long)
+        if dataloader_idx == 0:
+            features = self.model(data_dict, mode="db")["embedding"].float()
+            split = "db"
+        else:
+            features = self.modelq(data_dict, mode="q")["embedding"].float()
+            split = "q"
+        return {
+            "split": split,
+            "indices": indices.detach(),
+            "features": features.detach(),
+        }
+
     def on_validation_epoch_end(self):
         test_ds = getattr(self.trainer.datamodule, "test_ds", None)
         if test_ds is None:
