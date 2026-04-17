@@ -49,10 +49,12 @@ class FuseBlockToShallow(nn.Module):
             else:
                 self.updimsimg.append(nn.Linear(self.img_dims[i], dims[-1]))
 
-            if self.vox_dims[i] == dims[-1]:
-                self.updimsvox.append(nn.Identity())
-            else:
-                self.updimsvox.append(nn.Linear(self.vox_dims[i], dims[-1]))
+            if self.vox_dims[i] != dims[-1]:
+                raise ValueError(
+                    "Voxel features must be projected to the fusion dimension in UtoniaFE; "
+                    f"got vox_dims[{i}]={self.vox_dims[i]} and fusion dim={dims[-1]}"
+                )
+            self.updimsvox.append(nn.Identity())
 
         # self.cde = DiffBlock(dim=dims[-1], ode_dim=dims[-1])
 

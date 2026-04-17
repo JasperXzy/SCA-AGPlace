@@ -190,26 +190,26 @@ class TrainerCfg:
 
 @dataclass
 class ModelCfg:
-    features_dim: int = 256
+    features_dim: int = 512
     lr: float = 1e-5
     lrpc: float = 1e-4
     lrdb: float = 1e-5
-    lrdino: float = 0.0
-    unfreeze_dino_mode: str = "frozen"
+    lrdino: float = 1e-6
+    unfreeze_dino_mode: str = "last2"
     dino_extract_blocks: list[int] = field(default_factory=lambda: [7, 15, 23])
     utonia_pretrained: str = "utonia"
     unfreeze_utonia_mode: str = "last1"
-    lrutonia: float = 1e-5
-    utonia_extract_stages: list[int] = field(default_factory=lambda: [0, 2, 4])
-    amp_dtype: str = "none"
+    lrutonia: float = 1e-6
+    utonia_extract_stages: list[int] = field(default_factory=lambda: [2, 3, 4])
+    amp_dtype: str = "bf16-mixed"
     share_db: bool = False
     share_dbfe: bool = False
     mm_imgfe_dim: int = 1024
-    mm_voxfe_planes: list[int] = field(default_factory=lambda: [64, 128, 256])
-    mm_voxfe_dim: int = 256
+    mm_voxfe_planes: list[int] = field(default_factory=lambda: [512, 512, 512])
+    mm_voxfe_dim: int = 512
     mm_bevfe_planes: list[int] = field(default_factory=lambda: [64, 128, 256])
     mm_bevfe_dim: int = 256
-    mm_stg2fuse_dim: int = 256
+    mm_stg2fuse_dim: int = 512
     output_type: list[str] = field(default_factory=lambda: ["image", "vox", "shallow"])
     output_l2: bool = True
     final_type: list[str] = field(default_factory=lambda: ["imageorg", "voxorg", "shalloworg", "stg2image", "stg2vox"])
@@ -597,3 +597,36 @@ class Config:
         _validate_choices("data.camnames", self.data.camnames, {"00", "0203", "f", "fl", "fr", "b", "bl", "br"})
         if self.model.stg2fuse_type is not None:
             _validate_choices("model.stg2fuse_type", self.model.stg2fuse_type, {"basic"})
+        if len(self.model.dino_extract_blocks) != len(self.model.mm_voxfe_planes):
+            raise ValueError(
+                "model.dino_extract_blocks and model.mm_voxfe_planes must have the same length, "
+                f"got {len(self.model.dino_extract_blocks)} and {len(self.model.mm_voxfe_planes)}"
+            )
+        if self.model.dino_extract_blocks != sorted(self.model.dino_extract_blocks):
+            raise ValueError(
+                "model.dino_extract_blocks must be in increasing block order, "
+                f"got {self.model.dino_extract_blocks}"
+            )
+        if any(block < 0 or block > 23 for block in self.model.dino_extract_blocks):
+            raise ValueError(
+                "model.dino_extract_blocks must refer to DINOv2 ViT-L/14 block indexes in [0, 23], "
+                f"got {self.model.dino_extract_blocks}"
+            )
+        if len(self.model.utonia_extract_stages) != len(self.model.mm_voxfe_planes):
+            raise ValueError(
+                "model.utonia_extract_stages and model.mm_voxfe_planes must have the same length, "
+                f"got {len(self.model.utonia_extract_stages)} and {len(self.model.mm_voxfe_planes)}"
+            )
+        if any(dim != self.model.mm_stg2fuse_dim for dim in self.model.mm_voxfe_planes):
+            raise ValueError(
+                "model.mm_voxfe_planes must already match model.mm_stg2fuse_dim because "
+                "FuseBlockToShallow no longer applies a second voxel projection, "
+                f"got mm_voxfe_planes={self.model.mm_voxfe_planes} and "
+                f"mm_stg2fuse_dim={self.model.mm_stg2fuse_dim}"
+            )
+        if self.model.mm_voxfe_dim != self.model.mm_voxfe_planes[-1]:
+            raise ValueError(
+                "model.mm_voxfe_dim must match the last projected Utonia stage dimension, "
+                f"got mm_voxfe_dim={self.model.mm_voxfe_dim} and "
+                f"mm_voxfe_planes[-1]={self.model.mm_voxfe_planes[-1]}"
+            )
