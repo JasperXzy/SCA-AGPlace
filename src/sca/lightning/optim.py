@@ -13,7 +13,7 @@ def _trainable(parameters: Iterable[torch.nn.Parameter]) -> List[torch.nn.Parame
 
 
 def _add_group(groups: List[dict], params: Iterable[torch.nn.Parameter], lr: float):
-    params = list(params)
+    params = _trainable(params)
     if params:
         groups.append({"params": params, "lr": lr})
 
@@ -87,22 +87,17 @@ def build_param_groups(model: nn.Module, modelq: nn.Module, cfg) -> Tuple[List[d
 
 def configure_sca_optimizers(model: nn.Module, modelq: nn.Module, cfg):
     params_db, params_q = build_param_groups(model, modelq, cfg)
-    optimizer_db = torch.optim.Adam(params_db)
-    optimizer_q = torch.optim.Adam(params_q)
-    _log_optimizer_summary(optimizer_db, optimizer_q, modelq)
-    return [optimizer_db, optimizer_q]
+    optimizer = torch.optim.Adam([*params_db, *params_q])
+    _log_optimizer_summary(optimizer, params_db, params_q, modelq)
+    return optimizer
 
 
-def _log_optimizer_summary(optimizer_db, optimizer_q, modelq):
-    num_params_db = sum(
-        p.numel() for group in optimizer_db.param_groups for p in group["params"]
-    )
-    num_params_q = sum(
-        p.numel() for group in optimizer_q.param_groups for p in group["params"]
-    )
-    logging.info("Number of parameters in optimizerdb: %d", num_params_db)
-    logging.info("Number of parameters in optimizerq: %d", num_params_q)
-    for i, group in enumerate(optimizer_q.param_groups):
+def _log_optimizer_summary(optimizer, params_db, params_q, modelq):
+    num_params_db = _num_params(params_db)
+    num_params_q = _num_params(params_q)
+    logging.info("Number of parameters in optimizer/db groups: %d", num_params_db)
+    logging.info("Number of parameters in optimizer/q groups: %d", num_params_q)
+    for i, group in enumerate(optimizer.param_groups):
         n_params = sum(p.numel() for p in group["params"])
         logging.info("[param_group %d] %.3fM params @ lr=%s", i, n_params / 1e6, group["lr"])
 
@@ -111,3 +106,7 @@ def _log_optimizer_summary(optimizer_db, optimizer_q, modelq):
         n_total = sum(p.numel() for p in ptv3.parameters())
         n_train = sum(p.numel() for p in ptv3.parameters() if p.requires_grad)
         logging.info("[PTv3] trainable %.2fM / total %.2fM", n_train / 1e6, n_total / 1e6)
+
+
+def _num_params(groups):
+    return sum(p.numel() for group in groups for p in group["params"])

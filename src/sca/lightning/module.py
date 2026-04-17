@@ -21,7 +21,6 @@ class SCAModule(pl.LightningModule):
         self.save_hyperparameters(cfg.to_dict())
         self.model, self.modelq = build_models(cfg)
         self.loss_fn = SCALoss(cfg)
-        self.automatic_optimization = False
         self.best_r1r5r10ep = [0.0, 0.0, 0.0, 0]
         self._val_db_outputs = []
         self._val_q_outputs = []
@@ -33,29 +32,24 @@ class SCAModule(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         data_dict, triplets_local_indexes, _ = batch
-        opt_db, opt_q = self.optimizers()
         local_batch_size = triplets_local_indexes.shape[0] // self.cfg.negs_num_per_query
+        losses = self._compute_training_losses(data_dict, triplets_local_indexes)
+        self._log_training_losses(losses, local_batch_size)
+        return losses["total"]
 
+    def _compute_training_losses(self, data_dict, triplets_local_indexes):
         feats_ground, feats_aerial = self(data_dict)
-        losses = self.loss_fn(
+        return self.loss_fn(
             feats_ground=feats_ground,
             feats_aerial=feats_aerial,
             data_dict=data_dict,
             triplets_local_indexes=triplets_local_indexes,
         )
-        loss = losses["total"]
 
-        opt_db.zero_grad(set_to_none=True)
-        opt_q.zero_grad(set_to_none=True)
-        self.manual_backward(loss)
-        self._clip_if_configured(opt_db)
-        self._clip_if_configured(opt_q)
-        opt_db.step()
-        opt_q.step()
-
+    def _log_training_losses(self, losses, batch_size):
         self.log_dict(
             {
-                "train/loss": loss.detach(),
+                "train/loss": losses["total"].detach(),
                 "train/triplet": losses["triplet"].detach(),
                 "train/other": losses["other"].detach(),
             },
@@ -63,9 +57,8 @@ class SCAModule(pl.LightningModule):
             on_step=True,
             on_epoch=True,
             sync_dist=self.trainer.world_size > 1,
-            batch_size=local_batch_size,
+            batch_size=batch_size,
         )
-        return loss.detach()
 
     def on_validation_epoch_start(self):
         self._val_db_outputs = []
@@ -210,14 +203,3 @@ class SCAModule(pl.LightningModule):
         if self.trainer.is_global_zero:
             logging.info(now)
             logging.info(best)
-
-    def _clip_if_configured(self, optimizer):
-        clip_val = getattr(self.trainer, "gradient_clip_val", None)
-        if clip_val is None or clip_val == 0:
-            return
-        clip_algorithm = getattr(self.trainer, "gradient_clip_algorithm", "norm")
-        self.clip_gradients(
-            optimizer,
-            gradient_clip_val=clip_val,
-            gradient_clip_algorithm=clip_algorithm,
-        )
