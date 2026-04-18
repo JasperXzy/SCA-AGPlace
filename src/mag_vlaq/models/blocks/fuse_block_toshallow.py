@@ -49,6 +49,13 @@ class FuseBlockToShallow(nn.Module):
             else:
                 self.updimsimg.append(nn.Linear(self.img_dims[i], dims[-1]))
 
+            if self.args.utonia_projection_mode == "dual":
+                if self.vox_dims[i] == dims[-1]:
+                    self.updimsvox.append(nn.Identity())
+                else:
+                    self.updimsvox.append(nn.Linear(self.vox_dims[i], dims[-1]))
+                continue
+
             if self.vox_dims[i] != dims[-1]:
                 raise ValueError(
                     "Voxel features must be projected to the fusion dimension in UtoniaFE; "

@@ -16,6 +16,7 @@ class ImageFE(nn.Module):
         self.fe = torch.hub.load("facebookresearch/dinov2", "dinov2_vitl14")
         self.last_dim = 1024
         self.target_blocks = [int(e) for e in self.args.dino_extract_blocks]
+        self.target_block_counts = {block: self.target_blocks.count(block) for block in set(self.target_blocks)}
 
         dino_mode = getattr(self.args, "unfreeze_dino_mode", "frozen")
         if self.args.lrdino == 0.0:
@@ -43,13 +44,14 @@ class ImageFE(nn.Module):
         outputs = []
         for i, blk in enumerate(self.fe.blocks):
             x_tokens = blk(x_tokens)
-            if i in self.target_blocks:
+            repeat_count = self.target_block_counts.get(i, 0)
+            if repeat_count > 0:
                 tokens = self.fe.norm(x_tokens) if i == last_block_idx else x_tokens
                 patch_tokens = tokens[:, 1:]
                 b, n, c = patch_tokens.shape
                 assert h * w == n, f"Patch count mismatch: {h}*{w} != {n}"
                 feat_map = patch_tokens.transpose(1, 2).reshape(b, c, h, w)
-                outputs.append(feat_map)
+                outputs.extend([feat_map] * repeat_count)
         return outputs
 
     def forward(self, x):

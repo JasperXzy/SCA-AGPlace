@@ -200,6 +200,7 @@ class ModelCfg:
     utonia_pretrained: str = "utonia"
     unfreeze_utonia_mode: str = "last1"
     lrutonia: float = 1e-6
+    utonia_projection_mode: str = "direct"
     utonia_extract_stages: list[int] = field(default_factory=lambda: [2, 3, 4])
     amp_dtype: str = "bf16-mixed"
     share_db: bool = False
@@ -597,6 +598,11 @@ class Config:
         _validate_choices("data.camnames", self.data.camnames, {"00", "0203", "f", "fl", "fr", "b", "bl", "br"})
         if self.model.stg2fuse_type is not None:
             _validate_choices("model.stg2fuse_type", self.model.stg2fuse_type, {"basic"})
+        if self.model.utonia_projection_mode not in {"direct", "dual"}:
+            raise ValueError(
+                "model.utonia_projection_mode must be one of ['direct', 'dual'], "
+                f"got {self.model.utonia_projection_mode!r}"
+            )
         if len(self.model.dino_extract_blocks) != len(self.model.mm_voxfe_planes):
             raise ValueError(
                 "model.dino_extract_blocks and model.mm_voxfe_planes must have the same length, "
@@ -617,10 +623,12 @@ class Config:
                 "model.utonia_extract_stages and model.mm_voxfe_planes must have the same length, "
                 f"got {len(self.model.utonia_extract_stages)} and {len(self.model.mm_voxfe_planes)}"
             )
-        if any(dim != self.model.mm_stg2fuse_dim for dim in self.model.mm_voxfe_planes):
+        if self.model.utonia_projection_mode == "direct" and any(
+            dim != self.model.mm_stg2fuse_dim for dim in self.model.mm_voxfe_planes
+        ):
             raise ValueError(
-                "model.mm_voxfe_planes must already match model.mm_stg2fuse_dim because "
-                "FuseBlockToShallow no longer applies a second voxel projection, "
+                "model.mm_voxfe_planes must match model.mm_stg2fuse_dim when "
+                "model.utonia_projection_mode='direct', "
                 f"got mm_voxfe_planes={self.model.mm_voxfe_planes} and "
                 f"mm_stg2fuse_dim={self.model.mm_stg2fuse_dim}"
             )
