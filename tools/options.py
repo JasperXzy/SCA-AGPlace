@@ -108,6 +108,11 @@ def parse_arguments():
     parser.add_argument('--vlaq_out_dim', type=int, default=256)
     parser.add_argument('--vlaq_q_init', type=str, default='orthogonal',
                         choices=['orthogonal', 'xavier', 'kmeans'])
+    parser.add_argument('--use_ode_cq', type=str, default=False,
+                        help="Enable ODE-conditioned query bias for ground-side VLAQ.")
+    parser.add_argument('--ode_cq_rank', type=int, default=64)
+    parser.add_argument('--ode_cq_alpha_init', type=float, default=0.0)
+    parser.add_argument('--ode_cq_alpha_learn', type=str, default=True)
     parser.add_argument('--image_embed', type=str, default='stg2image') # imageorg  stg2image
     parser.add_argument('--cloud_embed', type=str, default='stg2vox') # voxorg  stg2vox
     parser.add_argument('--image_weight', type=float, default=1)

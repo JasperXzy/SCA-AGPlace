@@ -6,6 +6,7 @@ from network_mm.image_fe import ImageFE
 from network_mm.image_pooling import GeM
 from network_mm.chart import Chart2D, Chart3D
 from network_mm.fuse_block_toshallow import FuseBlockToShallow
+from network_mm.ode_cq import DeltaQ
 from network_mm.stage2fuse_blockadd import Stage2FuseBlockAdd
 from network_mm.vlaq import concat_dense_sparse, is_vlaq_only
 
@@ -23,6 +24,14 @@ class MLP(nn.Module):
         )
     def forward(self, x):
         return self.seq(x)
+
+
+def _as_bool(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() in {'1', 'true', 'yes', 'y'}
+    return bool(value)
 
 class MM(nn.Module):
     def __init__(self, drop=None, args=None):
@@ -42,20 +51,49 @@ class MM(nn.Module):
         # DINOv2 layer outputs share the same channel dim; stage count follows Utonia planes.
         img_dims = [self.args.mm_imgfe_dim for _ in range(len(planes))]
         self.vlaq_only = is_vlaq_only(self.args)
+        self.use_ode_cq = self.vlaq_only and _as_bool(getattr(self.args, 'use_ode_cq', False))
         self.vlaq = None
         if self.vlaq_only:
             self.chart_img = Chart2D(self.args.mm_imgfe_dim, self.args.vlaq_token_dim)
-            self.chart_vox = Chart3D(planes[-1], self.args.vlaq_token_dim)
+            if self.use_ode_cq:
+                self.chart_vox = None
+                self.chart_vox_l = nn.ModuleList(
+                    [Chart3D(plane, self.args.vlaq_token_dim) for plane in planes]
+                )
+            else:
+                self.chart_vox = Chart3D(planes[-1], self.args.vlaq_token_dim)
+                self.chart_vox_l = None
         else:
             self.chart_img = None
             self.chart_vox = None
+            self.chart_vox_l = None
 
         # Ensure img_dims are correctly passed to FuseBlockToShallow
         if self.vlaq_only:
-            self.fuseblocktoshallow = None
+            if self.use_ode_cq:
+                token_dims = [self.args.vlaq_token_dim for _ in range(len(planes))]
+                self.fuseblocktoshallow = FuseBlockToShallow(
+                    dims=token_dims,
+                    img_dims=token_dims,
+                    vox_dims=token_dims,
+                    bev_dims=[int(e) for e in self.args.mm_bevfe_planes.split('_')],
+                    args=self.args,
+                )
+                self.delta_q = DeltaQ(
+                    C=self.args.vlaq_token_dim,
+                    S=self.args.vlaq_n_queries,
+                    D=self.args.vlaq_query_dim,
+                    r=self.args.ode_cq_rank,
+                    alpha_init=self.args.ode_cq_alpha_init,
+                    alpha_learn=_as_bool(self.args.ode_cq_alpha_learn),
+                )
+            else:
+                self.fuseblocktoshallow = None
+                self.delta_q = None
             self.stg2fuseblock = None
             self.stg2fusefc = None
         else:
+            self.delta_q = None
             self.fuseblocktoshallow = FuseBlockToShallow(dims=[self.args.mm_stg2fuse_dim for _ in range(len(planes))],
                                                          img_dims=img_dims,
                                                          vox_dims=planes,
@@ -115,6 +153,29 @@ class MM(nn.Module):
             'normal': data_dict['utonia_normal'],
             'offset': data_dict['utonia_offset'],
         }
+
+    def _ode_cq_tokens_and_bias(self, imagefeatmaplist, voxfeatmaplist):
+        if self.fuseblocktoshallow is None or self.delta_q is None:
+            raise RuntimeError("ODE-CQ path requires fuseblocktoshallow and delta_q")
+        if self.chart_vox_l is None:
+            raise RuntimeError("ODE-CQ path requires per-stage voxel charts")
+
+        z_img_list = [
+            self.chart_img(self._flatten_patch_tokens(feat_map))
+            for feat_map in imagefeatmaplist
+        ]
+        z_vox_list = [
+            self.chart_vox_l[i](sparse_stage)
+            for i, sparse_stage in enumerate(voxfeatmaplist)
+        ]
+        fusedveclist = [
+            self.fuseblocktoshallow.per_scale_summary(z_img_list[i], '2d', i)
+            + self.fuseblocktoshallow.per_scale_summary(z_vox_list[i], '3d', i)
+            for i in range(len(self.planes))
+        ]
+        e_fuse = self.fuseblocktoshallow.forward_state(fusedveclist)
+        q_bias = self.delta_q(e_fuse)
+        return z_img_list[-1], z_vox_list[-1], q_bias
 
     def forward_tokens(self, data_dict):
         """Return unpooled query-side tokens for later VLAQ consumption."""
@@ -191,11 +252,17 @@ class MM(nn.Module):
             if 'image' not in self.args.output_type or 'vox' not in self.args.output_type:
                 raise ValueError("final_type=vlaq_only requires output_type to include image and vox")
 
-            img_tokens_last = self._flatten_patch_tokens(imagefeatmap)
-            z_img = self.chart_img(img_tokens_last)
-            z_vox = self.chart_vox(voxfeatmap)
+            if self.use_ode_cq:
+                z_img, z_vox, q_bias = self._ode_cq_tokens_and_bias(
+                    imagefeatmaplist, voxfeatmaplist
+                )
+            else:
+                img_tokens_last = self._flatten_patch_tokens(imagefeatmap)
+                z_img = self.chart_img(img_tokens_last)
+                z_vox = self.chart_vox(voxfeatmap)
+                q_bias = None
             z_ground = concat_dense_sparse(z_img, z_vox)
-            x = self.vlaq(z_ground, q_bias=None)
+            x = self.vlaq(z_ground, q_bias=q_bias)
             if self.args.final_l2 is True:
                 x = F.normalize(x, dim=-1)
 

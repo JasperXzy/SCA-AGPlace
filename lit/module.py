@@ -85,8 +85,12 @@ def build_param_groups(model: nn.Module, modelq: nn.Module, args) -> Tuple[List[
         if vlaq_only:
             if getattr(modelq, "chart_img", None) is not None:
                 _add_group(params_q, _trainable(modelq.chart_img.parameters()), args.lr)
-            if getattr(modelq, "chart_vox", None) is not None:
+            if getattr(modelq, "chart_vox_l", None) is not None:
+                _add_group(params_q, _trainable(modelq.chart_vox_l.parameters()), args.lrpc)
+            elif getattr(modelq, "chart_vox", None) is not None:
                 _add_group(params_q, _trainable(modelq.chart_vox.parameters()), args.lrpc)
+            if getattr(modelq, "delta_q", None) is not None:
+                _add_group(params_q, _trainable(modelq.delta_q.parameters()), args.lr)
             if getattr(modelq, "vlaq", None) is not None:
                 _add_group(params_q, _trainable(modelq.vlaq.parameters()), args.lr)
         else:

@@ -38,9 +38,17 @@ class FuseBlockToShallow(nn.Module):
         mode = getattr(self.args, 'fuse_summary_mode', 'mean')
         if modality == '2d':
             if mode == 'mean':
-                return F.adaptive_avg_pool2d(feat, output_size=1).flatten(1)
+                if feat.dim() == 4:
+                    return F.adaptive_avg_pool2d(feat, output_size=1).flatten(1)
+                if feat.dim() == 3:
+                    return feat.mean(dim=1)
+                raise ValueError(f"2d summary expects [B,C,H,W] or [B,N,C], got {feat.shape}")
             if mode == 'max':
-                return F.adaptive_max_pool2d(feat, output_size=1).flatten(1)
+                if feat.dim() == 4:
+                    return F.adaptive_max_pool2d(feat, output_size=1).flatten(1)
+                if feat.dim() == 3:
+                    return feat.max(dim=1).values
+                raise ValueError(f"2d summary expects [B,C,H,W] or [B,N,C], got {feat.shape}")
             if mode in {'attn', 'queries'}:
                 raise NotImplementedError(
                     f"fuse_summary_mode='{mode}' for 2d is scheduled for a later phase"
@@ -57,6 +65,39 @@ class FuseBlockToShallow(nn.Module):
         else:
             raise ValueError(f"Unknown summary modality: {modality}")
         raise ValueError(f"Unknown fuse_summary_mode: {mode}")
+
+    def forward_state(self, fusedveclist):
+        assert len(fusedveclist) == len(self.dims)
+        for idx, fusedvec in enumerate(fusedveclist):
+            if fusedvec.shape[-1] != self.dims[-1]:
+                raise ValueError(
+                    f"fused state {idx} dim must be {self.dims[-1]}, got {fusedvec.shape[-1]}"
+                )
+
+        if 'cde' in self.args.diff_type:
+            if not hasattr(self, 'cde'):
+                raise NotImplementedError("CDE forward_state requires self.cde, matching the legacy CDE path")
+            if self.args.diff_direction == 'forward':
+                ordered = fusedveclist
+            elif self.args.diff_direction == 'backward':
+                ordered = list(reversed(fusedveclist))
+            else:
+                raise ValueError(f"Unknown diff_direction: {self.args.diff_direction}")
+            fuseveclist = torch.stack(ordered, dim=1)
+            return self.cde(fuseveclist, z0=fuseveclist[:, 0])
+
+        fusevec = fusedveclist[0].new_zeros(fusedveclist[0].shape)
+        for step in range(len(self.dims)):
+            if self.args.diff_direction == 'forward':
+                i = step
+            elif self.args.diff_direction == 'backward':
+                i = len(self.dims) - 1 - step
+            else:
+                raise ValueError(f"Unknown diff_direction: {self.args.diff_direction}")
+
+            fusevec = fusevec + fusedveclist[i]
+            fusevec = self.blocks[i](fusevec)
+        return fusevec
 
     def forward_imgbev(self, imagemaplist, bevmaplist=None, voxmaplist=None):
         assert len(imagemaplist) == len(self.dims)
@@ -124,7 +165,7 @@ class FuseBlockToShallow(nn.Module):
 
         else:
             # ==== deep to shallow
-            fusevec = 0 
+            fusevec = 0
             for i in range(len(self.dims)):
                 if self.args.diff_direction == 'forward':
                     i = i
@@ -139,11 +180,8 @@ class FuseBlockToShallow(nn.Module):
                 imagevec = updimimage(imagevec)
                 voxvec = updimvox(voxvec)
 
-                fusevec = fusevec + imagevec + voxvec  
+                fusevec = fusevec + imagevec + voxvec
                 fusevec = block(fusevec)
-
-
-
 
         return fusevec
     
