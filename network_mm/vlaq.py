@@ -122,24 +122,27 @@ class VLAQ(nn.Module):
         scores = (z.unsqueeze(1) * q_per_token).sum(dim=-1) / self.scale
 
         index = batch_idx.unsqueeze(1).expand(-1, self.n_queries)
+        accum_dtype = scores.dtype
         max_scores = torch.full(
             (batch_size, self.n_queries),
             -torch.inf,
             device=z.device,
-            dtype=z.dtype,
+            dtype=accum_dtype,
         )
         max_scores.scatter_reduce_(0, index, scores, reduce='amax', include_self=True)
 
         exp_scores = torch.exp(scores - max_scores[batch_idx])
         denom = torch.zeros(
-            batch_size, self.n_queries, device=z.device, dtype=z.dtype
+            batch_size, self.n_queries, device=z.device, dtype=accum_dtype
         )
         denom.scatter_add_(0, index, exp_scores)
-        alpha = exp_scores / denom[batch_idx].clamp_min(torch.finfo(z.dtype).eps)
+        alpha = exp_scores / denom[batch_idx].clamp_min(torch.finfo(accum_dtype).eps)
 
-        source = alpha.unsqueeze(-1) * (z.unsqueeze(1) - q_per_token)
+        source = alpha.unsqueeze(-1) * (
+            z.to(accum_dtype).unsqueeze(1) - q_per_token.to(accum_dtype)
+        )
         residual = torch.zeros(
-            batch_size, self.n_queries, self.query_dim, device=z.device, dtype=z.dtype
+            batch_size, self.n_queries, self.query_dim, device=z.device, dtype=accum_dtype
         )
         residual.scatter_add_(
             0,
