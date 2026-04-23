@@ -38,7 +38,10 @@ class DeltaQ(nn.Module):
     def reset_parameters(self):
         nn.init.xavier_uniform_(self.w_down.weight)
         nn.init.zeros_(self.w_down.bias)
-        nn.init.zeros_(self.w_up_q.weight)
+        # LoRA-style: w_up_q Xavier + alpha gate (0 learnable) keeps forward
+        # q_bias = alpha * w_up_q(h) = 0 at init, while allowing alpha's
+        # gradient sum(g * w_up_q(h)) to be nonzero so the gate can unlock.
+        nn.init.xavier_uniform_(self.w_up_q.weight)
         nn.init.zeros_(self.w_up_q.bias)
 
     def forward(self, e_fuse):

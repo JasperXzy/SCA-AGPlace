@@ -37,7 +37,7 @@ model:
   ode_cq_alpha_learn: true
   ode_cq_bias_scale: 0.1
   ode_cq_max_ratio: 0.2
-  lrodecq: 0.000001
+  lrodecq: 0.0001
   fuse_summary_mode: mean
 
 data:

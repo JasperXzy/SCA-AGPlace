@@ -210,7 +210,11 @@ class MM(nn.Module):
             for i in range(len(self.planes))
         ]
         e_fuse = self.fuseblocktoshallow.forward_state(fusedveclist)
-        q_bias = self._stabilize_q_bias(self.delta_q(e_fuse))
+        # Detach before feeding DeltaQ so the q_bias aux-path backward does
+        # not flow into fuseblocktoshallow / chart_img / chart_vox_l[0..-2]
+        # and corrupt the main VLAQ path (those modules share chart_img and
+        # chart_vox_l[-1] with the main z_img / z_vox inputs).
+        q_bias = self._stabilize_q_bias(self.delta_q(e_fuse.detach()))
         return z_img_list[-1], z_vox_list[-1], q_bias
 
     def _stabilize_q_bias(self, q_bias):
