@@ -56,6 +56,32 @@ def _add_image_fe_groups(groups, image_fe_module, args, default_lr):
         _add_group(groups, other_params, base_lr)
 
 
+def _add_utonia_fe_groups(groups, vox_fe_module, args):
+    """Split UtoniaFE's trainable params into PTv3 LoRA (lrutonia_lora),
+    PTv3 non-LoRA (lrutonia), projs (lrpc) and other_vox (lrpc).
+    Handles lora / last1 / frozen / full modes uniformly."""
+    ptv3 = vox_fe_module.ptv3
+    ptv3_lora, ptv3_other = _split_lora(ptv3.named_parameters())
+
+    if ptv3_lora:
+        lrutonia_lora = getattr(args, "lrutonia_lora", None)
+        lora_lr = float(lrutonia_lora) if lrutonia_lora is not None else args.lrpc
+        _add_group(groups, ptv3_lora, lora_lr)
+
+    if ptv3_other and getattr(args, "lrutonia", 0.0) > 0.0:
+        _add_group(groups, ptv3_other, args.lrutonia)
+
+    _add_group(groups, _trainable(vox_fe_module.projs.parameters()), args.lrpc)
+
+    other_vox = [
+        p for name, p in vox_fe_module.named_parameters()
+        if p.requires_grad
+        and not name.startswith("ptv3.")
+        and not name.startswith("projs.")
+    ]
+    _add_group(groups, other_vox, args.lrpc)
+
+
 def build_param_groups(model: nn.Module, modelq: nn.Module, args) -> Tuple[List[dict], List[dict]]:
     vlaq_only = is_vlaq_only(args)
     params_db: List[dict] = []
@@ -80,19 +106,7 @@ def build_param_groups(model: nn.Module, modelq: nn.Module, args) -> Tuple[List[
 
         _add_group(params_q, _trainable(modelq.image_pool.parameters()), args.lr)
 
-        utonia_ptv3 = _trainable(modelq.vox_fe.ptv3.parameters())
-        utonia_proj = _trainable(modelq.vox_fe.projs.parameters())
-        if getattr(args, "lrutonia", 0.0) > 0.0:
-            _add_group(params_q, utonia_ptv3, args.lrutonia)
-        _add_group(params_q, utonia_proj, args.lrpc)
-
-        other_vox = [
-            p for name, p in modelq.vox_fe.named_parameters()
-            if p.requires_grad
-            and not name.startswith("ptv3.")
-            and not name.startswith("projs.")
-        ]
-        _add_group(params_q, other_vox, args.lrpc)
+        _add_utonia_fe_groups(params_q, modelq.vox_fe, args)
         _add_group(params_q, _trainable(modelq.vox_pool.parameters()), args.lrpc)
         if getattr(modelq, "fuseblocktoshallow", None) is not None:
             _add_group(params_q, _trainable(modelq.fuseblocktoshallow.parameters()), args.lr)

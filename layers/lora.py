@@ -123,3 +123,75 @@ def iter_lora_parameters(module):
 
 def is_lora_param_name(name: str) -> bool:
     return "lora_A" in name or "lora_B" in name
+
+
+# Path into a PTv3 Block to reach each target nn.Linear. MLP is wrapped in a
+# PointSequential so we have to index through 0 first.
+_PTV3_TARGET_PATH = {
+    "qkv":  ("attn", "qkv"),
+    "proj": ("attn", "proj"),
+    "fc1":  ("mlp", 0, "fc1"),
+    "fc2":  ("mlp", 0, "fc2"),
+}
+
+
+def _resolve_ptv3_linear(block, target: str):
+    if target not in _PTV3_TARGET_PATH:
+        raise ValueError(
+            f"Unknown PTv3 LoRA target '{target}'; supported: {list(_PTV3_TARGET_PATH)}"
+        )
+    path = _PTV3_TARGET_PATH[target]
+    parent = block
+    for step in path[:-1]:
+        parent = parent[step] if isinstance(step, int) else getattr(parent, step)
+    return parent, path[-1]
+
+
+def apply_utonia_lora(
+    ptv3_model,
+    rank: int = 8,
+    alpha: float = 16.0,
+    targets="qkv",
+    dropout: float = 0.0,
+    stages="all",
+):
+    """Freeze a PTv3 encoder and inject LoRALinear into every Block's target Linears.
+
+    Only touches encoder stages (ptv3_model.enc.enc{s}.block{i}); the wrapper
+    assumes ptv3 was constructed with enc_mode=True so no decoder exists.
+
+    Returns (num_injected, num_lora_params).
+    """
+    for p in ptv3_model.parameters():
+        p.requires_grad_(False)
+
+    enc = getattr(ptv3_model, "enc", None)
+    if enc is None:
+        raise RuntimeError("PTv3 has no .enc attribute; cannot inject LoRA")
+
+    num_stages = len(enc._modules)
+    stage_indices = _parse_block_indices(stages, num_stages)
+    target_names = _parse_targets(targets)
+
+    injected = 0
+    lora_params = 0
+    for s in stage_indices:
+        stage_name = f"enc{s}"
+        stage = getattr(enc, stage_name, None)
+        if stage is None:
+            continue
+        for name, mod in stage._modules.items():
+            if not name.startswith("block"):
+                continue
+            for target in target_names:
+                parent, attr = _resolve_ptv3_linear(mod, target)
+                base_linear = getattr(parent, attr)
+                if isinstance(base_linear, LoRALinear):
+                    continue
+                if not isinstance(base_linear, nn.Linear):
+                    continue
+                wrapped = LoRALinear(base_linear, r=rank, alpha=alpha, dropout=dropout)
+                setattr(parent, attr, wrapped)
+                injected += 1
+                lora_params += wrapped.lora_A.numel() + wrapped.lora_B.numel()
+    return injected, lora_params

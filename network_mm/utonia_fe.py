@@ -109,15 +109,32 @@ class UtoniaFE(nn.Module):
                 if hasattr(self.ptv3.enc, stage_name):
                     for param in getattr(self.ptv3.enc, stage_name).parameters():
                         param.requires_grad = True
+            elif freeze_mode == 'lora':
+                # Freeze base PTv3 and inject LoRA into every encoder Block's
+                # target Linears. LoRA params train under lrutonia_lora.
+                from layers.lora import apply_utonia_lora
+                n_inj, n_p = apply_utonia_lora(
+                    self.ptv3,
+                    rank=int(getattr(self.args, 'utonia_lora_rank', 8)),
+                    alpha=float(getattr(self.args, 'utonia_lora_alpha', 16.0)),
+                    targets=getattr(self.args, 'utonia_lora_targets', 'qkv'),
+                    dropout=float(getattr(self.args, 'utonia_lora_dropout', 0.0)),
+                    stages=getattr(self.args, 'utonia_lora_stages', 'all'),
+                )
+                logging.info(
+                    "[Utonia LoRA] injected %d LoRALinear, %d new trainable params",
+                    n_inj, n_p,
+                )
 
             # Always keep the adapted embedding trainable for domain adaptation
             for param in self.ptv3.embedding.parameters():
                 param.requires_grad = True
 
-            # lrutonia=0 overrides freeze_mode → fully freeze PTv3 so no
-            # grad is computed and the optimizer gate in train.py drops it.
+            # lrutonia=0 overrides freeze_mode → fully freeze PTv3, but for
+            # lora mode the LoRA params use lrutonia_lora instead, so lrutonia=0
+            # must not disable them.
             lrutonia = getattr(self.args, 'lrutonia', 0.0)
-            if lrutonia == 0.0:
+            if lrutonia == 0.0 and freeze_mode != 'lora':
                 for param in self.ptv3.parameters():
                     param.requires_grad = False
                 logging.info("[Utonia] lrutonia=0 -> PTv3 fully frozen (no grad)")

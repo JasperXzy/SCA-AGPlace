@@ -77,9 +77,15 @@ def parse_arguments():
     parser.add_argument("--dino_lora_dropout", type=float, default=0.0, help="Dropout on LoRA input (0 disables)")
     parser.add_argument("--lrdino_lora", type=float, default=None, help="Learning rate for LoRA params; falls back to args.lr when None")
     parser.add_argument("--utonia_pretrained", type=str, default="utonia", help="Load Utonia pretrained weights: 'none', 'utonia' (HF download), or local file path e.g. ~/.cache/utonia/ckpt/utonia.pth")
-    parser.add_argument("--unfreeze_utonia_mode", type=str, default="last1", choices=["frozen", "last1", "full"], help="Utonia freeze mode: frozen=all frozen, last1=stage4 only (~40M/29%%), full=all (~137M)")
+    parser.add_argument("--unfreeze_utonia_mode", type=str, default="last1", choices=["frozen", "last1", "full", "lora"], help="Utonia freeze mode: frozen=all frozen, last1=stage4 only (~40M/29%%), full=all (~137M), lora=inject LoRA into every Block")
     parser.add_argument("--lrutonia", type=float, default=1e-5, help="Learning rate for unfrozen Utonia parameters")
     parser.add_argument("--utonia_extract_stages", type=str, default="0_2_4", help="PTv3 encoder stages to extract for ODE fusion")
+    parser.add_argument("--utonia_lora_rank", type=int, default=8, help="LoRA rank when unfreeze_utonia_mode=lora")
+    parser.add_argument("--utonia_lora_alpha", type=float, default=16.0, help="LoRA alpha (scaling = alpha/rank) for Utonia")
+    parser.add_argument("--utonia_lora_targets", type=str, default="qkv", help="Comma-separated PTv3 block targets for LoRA: subset of qkv,proj,fc1,fc2")
+    parser.add_argument("--utonia_lora_stages", type=str, default="all", help="Encoder stages for LoRA injection: 'all' or underscore-separated, e.g. '2_3_4'")
+    parser.add_argument("--utonia_lora_dropout", type=float, default=0.0, help="Dropout on LoRA input for Utonia (0 disables)")
+    parser.add_argument("--lrutonia_lora", type=float, default=None, help="Learning rate for Utonia LoRA params; falls back to args.lrpc when None")
     parser.add_argument("--amp_dtype", type=str, default="none", choices=["none", "bf16", "fp16"],
                         help="Mixed precision for forward/loss. 'bf16' is recommended on Ampere+ (4090). 'fp16' requires GradScaler (not wired up here).")
     parser.add_argument('--resize', type=int, default=[256,256], nargs=2, help="Resizing shape for images (HxW).") # database transform
