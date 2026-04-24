@@ -399,6 +399,12 @@ class RetrievalEvalCallback(pl.Callback):
             sync_dist=trainer.world_size > 1,
         )
 
+        # R@1-gated LR schedule: step ReduceLROnPlateau with the broadcast R@1
+        # so all ranks advance schedulers in lock-step. No-op if the module
+        # hasn't defined the hook (e.g., other LightningModule subclasses).
+        if hasattr(pl_module, "maybe_step_r1_schedulers"):
+            pl_module.maybe_step_r1_schedulers(current[0])
+
         now = (
             f"Now : R@1 = {current[0]:.1f}   R@5 = {current[1]:.1f}   "
             f"R@10 = {current[2]:.1f}   epoch = {real_epoch:d}"

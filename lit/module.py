@@ -275,7 +275,42 @@ class SCAModule(pl.LightningModule):
             n_train = sum(p.numel() for p in ptv3.parameters() if p.requires_grad)
             logging.info("[PTv3] trainable %.2fM / total %.2fM", n_train / 1e6, n_total / 1e6)
 
-        return [optimizer_db, optimizer_q]
+        # R@1-gated ReduceLROnPlateau: stepped manually from RetrievalEvalCallback
+        # once R@1 first crosses r1_schedule_threshold (default 50). Skips LR
+        # shrinking during phase A (q_bias still climbing to the max_ratio clamp),
+        # only kicks in after the model enters the stable retrieval regime.
+        scheduler_db = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer_db, mode="max", factor=0.5, patience=3, min_lr=1e-7
+        )
+        scheduler_q = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer_q, mode="max", factor=0.5, patience=3, min_lr=1e-7
+        )
+        return (
+            [optimizer_db, optimizer_q],
+            [
+                {"scheduler": scheduler_db, "monitor": "val/R@1", "interval": "epoch"},
+                {"scheduler": scheduler_q, "monitor": "val/R@1", "interval": "epoch"},
+            ],
+        )
+
+    def maybe_step_r1_schedulers(self, r1_value):
+        threshold = float(getattr(self.args, "r1_schedule_threshold", 50.0))
+        if not hasattr(self, "_r1_schedule_started"):
+            self._r1_schedule_started = False
+        if float(r1_value) >= threshold:
+            self._r1_schedule_started = True
+        if not self._r1_schedule_started:
+            return
+        schedulers = self.lr_schedulers()
+        if schedulers is None:
+            return
+        if not isinstance(schedulers, (list, tuple)):
+            schedulers = [schedulers]
+        for sch in schedulers:
+            if isinstance(sch, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                sch.step(float(r1_value))
+            else:
+                sch.step()
 
     def _clip_if_configured(self, optimizer):
         clip_val = getattr(self.trainer, "gradient_clip_val", None)
