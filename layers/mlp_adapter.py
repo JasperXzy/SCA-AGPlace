@@ -1,5 +1,25 @@
+import os
+import sys
+
 import torch
 import torch.nn as nn
+
+
+# Resolve Utonia's PointModule so the PTv3 block wrapper participates in
+# PointSequential's dispatch as a Point-aware module.
+try:
+    from utonia.module import PointModule  # type: ignore
+except ImportError:
+    _utonia_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "demo", "Utonia",
+    )
+    if _utonia_path not in sys.path:
+        sys.path.append(_utonia_path)
+    try:
+        from utonia.module import PointModule  # type: ignore
+    except ImportError:  # pragma: no cover - fallback for environments without Utonia
+        PointModule = nn.Module  # type: ignore
 
 
 class MLPAdapter(nn.Module):
@@ -28,8 +48,12 @@ class MLPAdapter(nn.Module):
         return self.up(self.dropout(self.act(self.down(x))))
 
 
-class _PTv3BlockWithMLPAdapter(nn.Module):
+class _PTv3BlockWithMLPAdapter(PointModule):
     """Wraps a PTv3 Block to inject MLPAdapter parallel to its MLP.
+
+    Inherits from PointModule so that Utonia's PointSequential treats the
+    wrapper as a Point-aware module (passing the full Point object into
+    forward, not just point.feat).
 
     Replicates the original Block.forward (Point-aware) and adds the adapter
     output to the MLP branch before the second residual addition. drop_path
