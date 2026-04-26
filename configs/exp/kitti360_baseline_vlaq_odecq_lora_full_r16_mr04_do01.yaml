@@ -21,10 +21,10 @@ model:
   # DINOv2 LoRA (base fully frozen, LoRA adapters trained at lrdino_lora)
   lrdino: 0.0
   unfreeze_dino_mode: lora
-  dino_lora_rank: 8
-  dino_lora_alpha: 8.0
+  dino_lora_rank: 16
+  dino_lora_alpha: 16.0
   dino_lora_targets: "qkv"
-  dino_lora_blocks: "all"
+  dino_lora_blocks: "15_16_17_18_19_20_21_22_23"
   dino_lora_dropout: 0.0
   lrdino_lora: 0.000001
   dino_extract_blocks: "7_15_23"
@@ -32,8 +32,8 @@ model:
   utonia_pretrained: "~/.cache/utonia/ckpt/utonia.pth"
   lrutonia: 0.000001
   unfreeze_utonia_mode: lora
-  utonia_lora_rank: 8
-  utonia_lora_alpha: 8.0
+  utonia_lora_rank: 16
+  utonia_lora_alpha: 16.0
   utonia_lora_targets: "qkv"
   utonia_lora_stages: "2_3_4"
   utonia_lora_dropout: 0.0
@@ -43,14 +43,14 @@ model:
   vlaq_query_dim: 64
   vlaq_token_dim: 256
   vlaq_out_dim: 512
-  vlaq_dropout: 0.0
+  vlaq_dropout: 0.1
   vlaq_q_init: orthogonal
   use_ode_cq: true
   ode_cq_rank: 64
   ode_cq_alpha_init: 0.0
   ode_cq_alpha_learn: true
   ode_cq_bias_scale: 0.1
-  ode_cq_max_ratio: 0.2
+  ode_cq_max_ratio: 0.4
   lrodecq: 0.0001
   fuse_summary_mode: mean
 
@@ -64,18 +64,18 @@ data:
 logging:
   litlogger:
     enabled: true
-    name: kitti360_baseline_vlaq_odecq_lora_full
+    name: kitti360_vlaq_odecq_lora_full_r16_mr04_do01
     root_dir: logs
     save_logs: true
     metadata:
       dataset: kitti360
       dino_blocks: "7,15,23"
-      dino_peft: "lora_rank8_qkv_all"
+      dino_peft: "lora_rank16_qkv"
       utonia_stages: "0,2,4"
-      utonia_peft: "lora_rank8_qkv_all_stages"
+      utonia_peft: "lora_rank16_qkv"
       fusion_dim: "512"
       ode_cq_rank: "64"
-      note: "DINOv2 LoRA + PTv3 LoRA (rank=8, qkv only); both backbones frozen"
+      note: "DINOv2 LoRA + PTv3 LoRA; both backbones frozen"
       repository_name: MAG-VLAQ
       repository_branch: main
       repository_commit_hash: cb70d2b79
