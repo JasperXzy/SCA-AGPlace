@@ -96,14 +96,14 @@ class _DinoBlockWithMultiConv(nn.Module):
 
         # Second residual: MLP + MultiConv adapter (parallel)
         normed = block.norm2(x)
-        mlp_branch = block.ls2(block.mlp(normed))
+        mlp_branch = block.mlp(normed)
         # MultiConv operates on patch tokens only (CLS at position 0)
         cls_tok = normed[:, :1, :]
         patch_tok = normed[:, 1:, :]
         adapter_patch = self.adapter(patch_tok)
         adapter_branch = torch.cat([torch.zeros_like(cls_tok), adapter_patch], dim=1)
 
-        combined = mlp_branch + adapter_branch
+        combined = block.ls2(mlp_branch + adapter_branch)
         x = x + self._drop_path(block)(combined)
         return x
 

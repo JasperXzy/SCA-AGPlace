@@ -88,8 +88,9 @@ class _PTv3BlockWithMLPAdapter(PointModule):
         normed_feat = point.feat
         adapter_out = self.adapter(normed_feat)
 
-        point = block.ls2(block.mlp(point))
+        point = block.mlp(point)
         point.feat = point.feat + adapter_out
+        point = block.ls2(point)
         point = block.drop_path(point)
         point.feat = shortcut + point.feat
         if not block.pre_norm:
